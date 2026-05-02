@@ -107,12 +107,12 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
         .filter((nd) => !seedTypes.has(nd.data?.blockType) && !disabledIds.has(nd.id) && !reachable.has(nd.id))
         .map((nd) => ({ id: nd.id, title: nd.data?.title || nd.data?.blockType || nd.id, blockType: nd.data?.blockType }))
       throw new GraphValidationError(
-        `"${title}" has no input connection — it is unreachable from any Start or User Input node.`,
+        `"${title}" has no input connection — it is unreachable from any trigger node (Start, User Input, Schedule, Webhook, or Audio Input).`,
         {
           nodeId: n.id,
           nodeTitle: title,
           blockType: n.data?.blockType,
-          cause: 'No incoming edges found. The graph executor can only run nodes that are connected downstream from a Start or User Input node.',
+          cause: 'No incoming edges found. The graph executor can only run nodes that are connected downstream from a trigger node.',
           hint: 'Connect an edge from another block\'s output to this block\'s input, or disable it (⌥B / right-click → Disable).',
           affectedNodes: allUnconnected,
           extra: {

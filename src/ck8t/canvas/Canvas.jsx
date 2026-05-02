@@ -367,7 +367,7 @@ function CanvasInner() {
                 // eslint-disable-next-line no-unused-vars
                 const cleanEdges = edges.map(({ selected, ...e }) => e)
                 const exportData = {
-                  _comment: `Exported from ConvEngine Agent Builder Studio — ${new Date().toISOString()}`,
+                  _comment: `Exported from CK8T — Agent Builder Studio — ${new Date().toISOString()}`,
                   workflow: {
                     id:             activeWorkflow.id,
                     name:           activeWorkflow.name,

@@ -96,6 +96,7 @@ const CARD_PORT_DEFAULTS: Record<string, { inputs: PortDef[]; outputs: PortDef[]
   user_input:    { inputs: [], outputs: [{ key: 'value', type: 'any' }] },
   schedule:      { inputs: [], outputs: [{ key: 'firedAt', type: 'string' }] },
   webhook_request: { inputs: [], outputs: [{ key: 'body', type: 'json' }, { key: 'headers', type: 'json' }, { key: 'query', type: 'json' }] },
+  audio_input:   { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'audio', type: 'json' }] },
   variables:     { inputs: [], outputs: [] },
   // Core
   agent:         { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'data', type: 'string' }, { key: 'status', type: 'number' }, { key: 'headers', type: 'json' }] },
@@ -1289,7 +1290,7 @@ export async function executeGraph(opts: {
     outgoingAll[e.source].push(e);
   }
   const seedIds = nodes
-    .filter((n) => ['starter', 'user_input', 'schedule', 'webhook_request'].includes(n.data?.blockType as string))
+    .filter((n) => ['starter', 'user_input', 'schedule', 'webhook_request', 'audio_input'].includes(n.data?.blockType as string))
     .map((n) => n.id);
   const bfsQueue = [...seedIds];
   for (const id of bfsQueue) {
@@ -1307,7 +1308,7 @@ export async function executeGraph(opts: {
   }
 
   // ── Validate: non-seed nodes must be reachable from Start ────────────
-  const seedTypes = new Set(['starter', 'user_input', 'schedule', 'webhook_request']);
+  const seedTypes = new Set(['starter', 'user_input', 'schedule', 'webhook_request', 'audio_input']);
   for (const n of nodes) {
     if (seedTypes.has(n.data?.blockType as string)) continue;
     if (disabledIds.has(n.id)) continue;
@@ -1349,7 +1350,7 @@ export async function executeGraph(opts: {
   // Use key-presence checks so falsy typed values (false, 0, '') are preserved.
   for (const n of nodes) {
     const blockType = n.data?.blockType as string;
-    if (!['starter', 'user_input', 'schedule', 'webhook_request'].includes(blockType)) continue;
+    if (!['starter', 'user_input', 'schedule', 'webhook_request', 'audio_input'].includes(blockType)) continue;
 
     // Disabled seed node → produce null, mark started, skip core logic
     if (disabledIds.has(n.id)) {
@@ -1394,6 +1395,16 @@ export async function executeGraph(opts: {
     } else if (blockType === 'webhook_request') {
       const webhookPayload = (inputs as Record<string, unknown>).__webhook__ ?? null;
       outputs[n.id] = { body: webhookPayload, headers: {}, query: {} };
+      started.add(n.id);
+      trace.push({ nodeId: n.id, blockType, title: n.data?.title, input: null, output: outputs[n.id], ms: 0 });
+    } else if (blockType === 'audio_input') {
+      const vals = (subBlockValues[n.id] || {}) as Record<string, unknown>;
+      const audioB64 = String(vals._audioB64 ?? '');
+      const audioFormat = String(vals._audioFormat ?? 'webm');
+      const audioDurationMs = Number(vals._audioDurationMs ?? 0);
+      outputs[n.id] = audioB64
+        ? { audio_base64: audioB64, format: audioFormat, duration_ms: audioDurationMs }
+        : null;
       started.add(n.id);
       trace.push({ nodeId: n.id, blockType, title: n.data?.title, input: null, output: outputs[n.id], ms: 0 });
     }

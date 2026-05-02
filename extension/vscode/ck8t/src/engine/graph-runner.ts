@@ -11,7 +11,7 @@
  *   sort, aggregate, merge, router_v2, ai_classifier, api, delay,
  *   variables, crypto, show_preview, table, save_to_files, response,
  *   error_handler, sub_workflow, parallel, for_loop, for_each, loop,
- *   starter, user_input, webhook_request, schedule, skill, wait
+ *   starter, user_input, webhook_request, schedule, audio_input, skill, wait
  */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { AgentRequest, AgentResponse, Workflow, TraceEntry, RunResult } from '../types';
@@ -450,6 +450,7 @@ const CARD_PORT_DEFAULTS: Record<string, { inputs: string[]; outputs: string[] }
   user_input:      { inputs: [],  outputs: ['value'] },
   schedule:        { inputs: [],  outputs: ['firedAt'] },
   webhook_request: { inputs: [],  outputs: ['body', 'headers', 'query'] },
+  audio_input:     { inputs: ['input'], outputs: ['audio'] },
   variables:       { inputs: [],  outputs: [] },
   agent:           { inputs: ['input'],  outputs: ['data', 'status', 'headers'] },
   function:        { inputs: ['input'],  outputs: ['result'] },
@@ -529,7 +530,9 @@ export async function executeGraph({
     outgoingAll[e.source].push(e);
   }
   const reachable = new Set<string>();
-  const seedIds = nodes.filter((n) => n.data?.blockType === 'starter' || n.data?.blockType === 'user_input').map((n) => n.id);
+  const seedIds = nodes
+    .filter((n) => ['starter', 'user_input', 'schedule', 'webhook_request', 'audio_input'].includes(String(n.data?.blockType || '')))
+    .map((n) => n.id);
   const queue = [...seedIds];
   for (const id of queue) {
     if (reachable.has(id)) continue;
@@ -544,10 +547,10 @@ export async function executeGraph({
   const started = new Set<string>();
   const chosenHandle: Record<string, string | null> = {};
 
-  // Seed starter + user_input
+  // Seed trigger nodes
   for (const n of nodes) {
     const bt = n.data?.blockType as string;
-    if (!['starter', 'user_input', 'webhook_request', 'schedule'].includes(bt)) continue;
+    if (!['starter', 'user_input', 'webhook_request', 'schedule', 'audio_input'].includes(bt)) continue;
 
     // Disabled seed node → produce null, mark started, skip core logic
     if (disabledIds.has(n.id)) {
@@ -569,6 +572,21 @@ export async function executeGraph({
     } else if (bt === 'webhook_request') {
       outputs[n.id] = inputs[n.id] ?? null;
       trace.push({ nodeId: n.id, blockType: 'webhook_request', title: n.data?.title as string, input: null, output: outputs[n.id], ms: 0 });
+      started.add(n.id);
+    } else if (bt === 'schedule') {
+      const firedAt = new Date().toISOString();
+      outputs[n.id] = { firedAt };
+      trace.push({ nodeId: n.id, blockType: 'schedule', title: n.data?.title as string, input: null, output: outputs[n.id], ms: 0 });
+      started.add(n.id);
+    } else if (bt === 'audio_input') {
+      const vals = (subBlockValues[n.id] || {}) as Record<string, unknown>;
+      const audioB64 = String(vals._audioB64 ?? '');
+      const audioFormat = String(vals._audioFormat ?? 'webm');
+      const audioDurationMs = Number(vals._audioDurationMs ?? 0);
+      outputs[n.id] = audioB64
+        ? { audio_base64: audioB64, format: audioFormat, duration_ms: audioDurationMs }
+        : null;
+      trace.push({ nodeId: n.id, blockType: 'audio_input', title: n.data?.title as string, input: null, output: outputs[n.id], ms: 0 });
       started.add(n.id);
     }
   }
@@ -844,6 +862,10 @@ export async function executeGraph({
             }
             case 'schedule':
             case 'webhook_request': {
+              output = input;
+              break;
+            }
+            case 'audio_input': {
               output = input;
               break;
             }

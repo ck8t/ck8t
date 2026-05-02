@@ -179,7 +179,7 @@ export default function SideNav() {
         <button
           className="bs-rail-btn"
           onClick={() => openWiki()}
-          title="Wiki — Agent Builder Studio Guide"
+          title="Wiki — CK8T — Agent Builder Studio Guide"
         >
           <BookIcon className="bs-rail-ico" />
           <span className="bs-rail-label">Wiki</span>

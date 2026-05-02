@@ -1,5 +1,5 @@
 /**
- * Validates and parses a JSON file exported from ConvEngine Agent Builder Studio.
+ * Validates and parses a JSON file exported from CK8T — Agent Builder Studio.
  *
  * Three export shapes are supported:
  *   1. Canvas "Export JSON"          — { nodes, edges, subBlockValues }

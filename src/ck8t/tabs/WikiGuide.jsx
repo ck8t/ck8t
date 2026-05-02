@@ -190,7 +190,7 @@ export default function WikiGuide() {
   }
 
   const WORKFLOW_JSON_EXAMPLE = JSON.stringify({
-    "_comment": "Exported from ConvEngine Agent Builder Studio — 2026-04-21T00:47:53.210Z",
+    "_comment": "Exported from CK8T — Agent Builder Studio — 2026-04-21T00:47:53.210Z",
     "workflow": {
       "id": "wf_demo_url_summary",
       "name": "Demo · URL → Summary",
@@ -314,10 +314,10 @@ export default function WikiGuide() {
     <div className="wiki">
       {/* Hero */}
       <section className="wiki-hero">
-        <h1>ConvEngine Agent Builder Studio</h1>
+        <h1>CK8T — Agent Builder Studio</h1>
         <div className="wiki-subtitle">Complete Guide · 2026</div>
         <p className="wiki-desc">
-          A field guide to ConvEngine's visual agent builder. Covers the full workspace
+          A field guide to CK8T's visual agent builder. Covers the full workspace
           hierarchy (teams → agent pools → agents → skills → workflows), client-side
           graph execution, every built-in block, four end-to-end workflow recipes, and
           an appendix with shortcuts, file layout, extension authoring, and debugging.

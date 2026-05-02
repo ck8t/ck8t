@@ -182,6 +182,7 @@ export const CATEGORY_CONFIG = {
   triggers: {
     topTypes: [],
     subgroups: [
+      { id: 'media_input', label: 'Media Input', types: ['audio_input'] },
       { id: 'http',      label: 'HTTP',       types: ['webhook_request'] },
       { id: 'scheduled', label: 'Scheduled',  types: ['schedule'] },
     ],

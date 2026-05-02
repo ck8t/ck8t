@@ -122,7 +122,7 @@ export class WikiViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
 
-<h1>⚡ Builder Studio</h1>
+<h1>⚡ ck8t - Builder Studio</h1>
 <p class="subtitle">Quick Reference · Synced from WikiGuide</p>
 
 <!-- ═══ KEYBOARD SHORTCUTS ═══ -->

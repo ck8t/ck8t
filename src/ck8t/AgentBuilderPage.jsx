@@ -1,5 +1,5 @@
 /**
- * Agent Builder Studio — sim-inspired 4-pane workspace.
+ * CK8T — Agent Builder Studio— sim-inspired 4-pane workspace.
  *
  *   ┌───────────────────────────────────────────────────────────────┐
  *   │ Topbar: [Brand]   [Workflow name]        [▶ Run] [Save]       │
@@ -135,7 +135,7 @@ export default function AgentBuilderPage() {
     const cleanNodes = nodes.map(({ width, height, dragging, selected, positionAbsolute, ...n }) => n)
     const cleanEdges = edges.map(({ selected, ...e }) => e)
     const exportData = {
-      _comment: `Exported from ConvEngine Agent Builder Studio — ${new Date().toISOString()}`,
+      _comment: `Exported from CK8T — Agent Builder Studio — ${new Date().toISOString()}`,
       workflow: {
         id:             active.id,
         name:           active.name,
@@ -340,7 +340,7 @@ export default function AgentBuilderPage() {
               <PanelLeftIcon className="bs-ico-sm" />
             </button>
           )}
-          <span className="bs-topbar-brand">Agent Builder Studio</span>
+          <span className="bs-topbar-brand">CK8T — Agent Builder Studio</span>
         </div>
         <div className="bs-topbar-center">
           {active ? (

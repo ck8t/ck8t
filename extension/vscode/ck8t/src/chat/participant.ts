@@ -43,7 +43,7 @@ export function registerChatParticipant(
     if (cmd === 'help' || query === 'help') {
       stream.markdown(
         [
-          '## ⚡ Builder Studio',
+          '## ⚡ ck8t - Builder Studio',
           '',
           'A visual agentic workflow builder running inside VS Code, powered by **GitHub Copilot**.',
           '',
