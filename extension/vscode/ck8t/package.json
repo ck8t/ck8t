@@ -1,0 +1,118 @@
+{
+  "name": "ck8t",
+  "displayName": "CK8T — Agent Builder Studio",
+  "description": "Agentic workflow builder powered by GitHub Copilot — visual canvas, graph runner, cron/webhook scheduler, MCP support.",
+  "version": "0.1.0",
+  "publisher": "salilvnair",
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "agent",
+    "workflow",
+    "copilot",
+    "builder",
+    "mcp"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ck8t",
+          "title": "CK8T - Agent Builder Studio",
+          "icon": "icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ck8t": [
+        {
+          "id": "bs.canvasView",
+          "name": "Quick Access",
+          "type": "tree"
+        },
+        {
+          "id": "bs.wikiView",
+          "name": "Quick Reference",
+          "type": "webview",
+          "initialSize": 6
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "bs.canvasView",
+        "contents": "[$(zap) Open CK8T](command:bs.start)\n\n[$(settings-gear) CK8T Settings](command:workbench.action.openSettings?%5B%22ck8t%22%5D)"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "bs",
+        "fullName": "CK8T",
+        "name": "bs",
+        "description": "Open the CK8T Agentic UI Builder canvas. Try: @bs start",
+        "isSticky": false,
+        "commands": [
+          {
+            "name": "start",
+            "description": "Open the CK8T canvas"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "bs.start",
+        "title": "CK8T: Open Canvas",
+        "category": "CK8T"
+      },
+      {
+        "command": "bs.stopBridge",
+        "title": "CK8T: Stop Bridge Server",
+        "category": "CK8T"
+      }
+    ],
+    "configuration": {
+      "title": "CK8T",
+      "properties": {
+        "ck8t.copilotFamily": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Default GitHub Copilot model family to use for agent nodes (e.g. gpt-4o, claude-sonnet, o1)."
+        },
+        "ck8t.useInProcessCron": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run cron-scheduled workflows in-process inside VS Code. When false, use the external scheduler/start endpoint."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "build": "cd ../../.. && VITE_CONVENGINE_BASE=BRIDGE_BASE_PLACEHOLDER vite build --config vite.extension.config.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.99.0",
+    "typescript": "^5.6.0"
+  }
+}
