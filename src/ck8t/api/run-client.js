@@ -16,10 +16,12 @@
  * Base URL is configurable via `VITE_CONVENGINE_BASE`
  * (defaults to `http://localhost:8080/api/v1`).
  */
+// ck8t-server is the gateway for all backend calls (it proxies to Spring Boot when present).
+// Never bypass ck8t-server by talking directly to Spring Boot (8080) — always route through 3001.
 const BASE = (
   globalThis.__CK8T_BRIDGE_BASE__ ||
   import.meta.env?.VITE_CONVENGINE_BASE ||
-  (import.meta.env?.DEV ? 'http://localhost:3001/api/v1' : 'http://localhost:8080/api/v1')
+  'http://localhost:3001/api/v1'
 ).replace(/\/$/, '')
 
 export async function runAgent({ agent, input, signal }) {

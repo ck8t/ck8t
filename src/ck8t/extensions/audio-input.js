@@ -16,7 +16,7 @@ const AudioInputBlock = {
     'Records audio from the browser microphone and outputs a base64-encoded '
     + 'blob with format and duration metadata. Wire downstream to a Mapper '
     + 'or MCP block for processing.',
-  category: 'triggers',
+  category: 'blocks',
   bgColor: '#EC4899',
   icon: MicIcon,
   subBlocks: [],

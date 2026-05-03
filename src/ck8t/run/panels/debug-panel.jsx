@@ -192,6 +192,13 @@ function DebugDetails({ event, deltaMs }) {
         </Disclosure>
       )}
 
+      {/* ── LLM fallback diagnostics ── */}
+      {meta?.llmFallback && (
+        <Disclosure label="LLM fallback diagnostics" defaultOpen>
+          <div className="bs-debug-json"><JsonView value={meta.llmFallback} /></div>
+        </Disclosure>
+      )}
+
       {/* ── Output ── */}
       {output != null && type === 'done' && (
         <Disclosure label="Output" defaultOpen>

@@ -55,7 +55,11 @@ export default function StyledSelect({ value, options = [], onChange, placeholde
   // Close on scroll (so menu doesn't float away)
   useEffect(() => {
     if (!open) return
-    const onScroll = () => setOpen(false)
+    const onScroll = (e) => {
+      // Keep menu open while the user scrolls inside the dropdown itself.
+      if (menuRef.current && e?.target && menuRef.current.contains(e.target)) return
+      setOpen(false)
+    }
     window.addEventListener('scroll', onScroll, true)
     return () => window.removeEventListener('scroll', onScroll, true)
   }, [open])

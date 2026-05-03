@@ -36,6 +36,7 @@ extension/vscode/ck8t/.vscode/
 *.vsix
 
 # Misc build / tool artifacts
-scripts/
-
 dist
+
+# Local env — never commit
+.env

@@ -78,6 +78,11 @@ export default function ErrorDetailView({ error, errorDetail: d }) {
           <pre className="bs-debug-pre">{d.responseBody}</pre>
         </Disclosure>
       )}
+      {d?.llmFallback && (
+        <Disclosure label="LLM fallback diagnostics" defaultOpen>
+          <div className="bs-debug-json"><JsonView value={d.llmFallback} /></div>
+        </Disclosure>
+      )}
       {d?.stack && (
         <Disclosure label="Stack trace" defaultOpen>
           <StackTrace text={d.stack} />

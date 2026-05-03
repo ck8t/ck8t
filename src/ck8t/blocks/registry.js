@@ -160,7 +160,8 @@ export const CATEGORY_CONFIG = {
   blocks: {
     topTypes: ['starter'],
     subgroups: [
-      { id: 'io',         label: 'Input & Output',    types: ['user_input', 'mapper', 'api', 'http_response', 'response', 'save_to_files', 'show_preview'] },
+      { id: 'input',      label: 'Input',              types: ['user_input', 'audio_input'] },
+      { id: 'output',     label: 'Output',             types: ['http_response', 'response', 'save_to_files', 'show_preview', 'ext_save_logger', 'mapper'] },
       { id: 'essentials', label: 'Essentials',        types: ['variables', 'sub_workflow'] },
       { id: 'logic',      label: 'Logic & Flow',      types: ['condition', 'if_else', 'if_elseif_else', 'switch', 'router_v2', 'error_handler'] },
       { id: 'loops',      label: 'Loops',             types: ['loop', 'for_loop', 'for_each', 'parallel'] },
@@ -172,6 +173,7 @@ export const CATEGORY_CONFIG = {
   tools: {
     topTypes: [],
     subgroups: [
+      { id: 'api',       label: 'API',            types: ['api'] },
       { id: 'scripting', label: 'Scripting',     types: ['function', 'skill'] },
       { id: 'databases', label: 'Databases',     types: ['postgresql', 'redis', 'mongodb'] },
       { id: 'messaging', label: 'Messaging',     types: ['smtp', 'slack'] },
@@ -182,7 +184,6 @@ export const CATEGORY_CONFIG = {
   triggers: {
     topTypes: [],
     subgroups: [
-      { id: 'media_input', label: 'Media Input', types: ['audio_input'] },
       { id: 'http',      label: 'HTTP',       types: ['webhook_request'] },
       { id: 'scheduled', label: 'Scheduled',  types: ['schedule'] },
     ],

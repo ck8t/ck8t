@@ -9,7 +9,7 @@ export const ApiBlock = {
   longDescription:
     'Connect to any external API with support for all standard HTTP methods and customizable request parameters.',
   docsLink: 'https://docs.sim.ai/blocks/api',
-  category: 'blocks',
+  category: 'tools',
   integrationType: IntegrationType.DeveloperTools,
   tags: ['automation', 'webhooks'],
   bgColor: '#2F55FF',

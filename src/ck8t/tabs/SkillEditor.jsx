@@ -24,6 +24,7 @@ import CodeEditor from '../components/CodeEditor'
 import StyledSelect from '../components/StyledSelect'
 import { runSkillSource, makeSkillFetch } from '../run/graph-runner'
 import { instrumentSource, serializeVar, fmtConsoleArg } from '../run/skill-debugger'
+import ErrorDetailView from '../run/panels/ErrorDetailView'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -271,7 +272,7 @@ const RPANEL_TABS = [
   { id: 'output',    label: 'Output',    Icon: OutputIcon },
 ]
 
-function DebugRightPanel({ rightTab, setRightTab, variables, logs, output, error, state, paramsText, setParamsText }) {
+function DebugRightPanel({ rightTab, setRightTab, variables, logs, output, error, errorDetail, state, paramsText, setParamsText }) {
   const [open, setOpen] = useState(true)
   const [width, setWidth] = useState(RIGHT_PANEL_DEFAULT_W)
   const [dragging, setDragging] = useState(false)
@@ -436,6 +437,7 @@ function DebugRightPanel({ rightTab, setRightTab, variables, logs, output, error
                 <>
                   <div className="bs-dbg-pane-hint bs-dbg-pane-hint--err">✕ Runtime error</div>
                   <pre className="bs-dbg-result-pre bs-dbg-result-pre--err">{error}</pre>
+                  {errorDetail && <ErrorDetailView errorDetail={errorDetail} />}
                 </>
               )}
               {output !== null && !error && (
@@ -515,6 +517,7 @@ function SkillDebugger({ skill, breakpoints, setBreakpoints, onClose }) {
     variables: {},
     logs: [],
     error: null,
+    errorDetail: null,
     output: null,
   })
   const [paramsText, setParamsText] = useState(DEFAULT_PARAMS)
@@ -569,7 +572,7 @@ function SkillDebugger({ skill, breakpoints, setBreakpoints, onClose }) {
     resolverRef.current = null
     const logs = []
 
-    setState({ running: true, paused: false, currentLine: null, variables: {}, logs: [], error: null, output: null })
+    setState({ running: true, paused: false, currentLine: null, variables: {}, logs: [], error: null, errorDetail: null, output: null })
 
     // Instrument and wrap in async IIFE so top-level await is valid
     const instrumented = instrumentSource(skill.source)
@@ -619,17 +622,23 @@ function SkillDebugger({ skill, breakpoints, setBreakpoints, onClose }) {
       // eslint-disable-next-line no-new-func
       const fn = new Function('params', '__bp', 'fetch', 'console', wrapped)
       const output = await fn(params, bpFn, skillFetch, captureConsole)
-      setState((s) => ({ ...s, running: false, paused: false, output }))
+      setState((s) => ({ ...s, running: false, paused: false, output, errorDetail: null }))
     } catch (e) {
       if (e.message === STOP_SIGNAL) {
         setState((s) => ({ ...s, running: false, paused: false }))
       } else {
-        setState((s) => ({ ...s, running: false, paused: false, error: e.message || String(e) }))
+        setState((s) => ({
+          ...s,
+          running: false,
+          paused: false,
+          error: e.message || String(e),
+          errorDetail: e?.errorDetail || null,
+        }))
       }
     }
   }, [skill, paramsText])
 
-  const { logs, variables, output, error } = state
+  const { logs, variables, output, error, errorDetail } = state
 
   // Auto-switch to console when logs arrive, to output when done
   useEffect(() => {
@@ -674,6 +683,7 @@ function SkillDebugger({ skill, breakpoints, setBreakpoints, onClose }) {
           logs={logs}
           output={output}
           error={error}
+          errorDetail={errorDetail}
           state={state}
           paramsText={paramsText}
           setParamsText={setParamsText}
@@ -710,9 +720,15 @@ function SkillTestPanel({ skill, onDebug }) {
     const t0 = performance.now()
     try {
       const output = await runSkillSource(skill, paramsText, { debugLog: captureConsole })
-      setResult({ output, logs: [...logsRef.current], error: null, ms: Math.round(performance.now() - t0) })
+      setResult({ output, logs: [...logsRef.current], error: null, errorDetail: null, ms: Math.round(performance.now() - t0) })
     } catch (e) {
-      setResult({ output: null, logs: [...logsRef.current], error: e.message || String(e), ms: Math.round(performance.now() - t0) })
+      setResult({
+        output: null,
+        logs: [...logsRef.current],
+        error: e.message || String(e),
+        errorDetail: e?.errorDetail || null,
+        ms: Math.round(performance.now() - t0),
+      })
     } finally {
       setRunning(false)
     }
@@ -772,6 +788,7 @@ function SkillTestPanel({ skill, onDebug }) {
                 <div className="bs-skill-debug-error">
                   <div className="bs-skill-debug-section-label">Error</div>
                   <pre className="bs-skill-debug-pre bs-skill-debug-pre--err">{result.error}</pre>
+                  {result.errorDetail && <ErrorDetailView errorDetail={result.errorDetail} />}
                 </div>
               ) : (
                 <div className="bs-skill-debug-result">

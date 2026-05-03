@@ -15,7 +15,7 @@ const SaveLoggerBlock = {
   description: 'Append a labeled payload to an in-memory run log',
   longDescription:
     'Example third-party extension. Demonstrates how a dropped-in block auto-appears in the Builder Studio toolbar without modifying core files.',
-  category: 'tools',
+  category: 'blocks',
   bgColor: '#EC4899',
   icon: ExtensionIcon,
   subBlocks: [

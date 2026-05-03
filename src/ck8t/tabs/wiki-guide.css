@@ -735,3 +735,33 @@
 .light .wiki-json-card-desc strong {
   color: #1f2937;
 }
+
+/* ── Prism CodeBlock ───────────────────────────────────────────────────── */
+.wiki-codeblock {
+  margin: 12px 0 20px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.07);
+}
+.wiki-codeblock-filename {
+  background: #1e1e2e;
+  color: #a5adce;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  padding: 6px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  letter-spacing: 0.02em;
+}
+.wiki-codeblock-pre {
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+[data-theme="light"] .wiki-codeblock,
+.light .wiki-codeblock {
+  border-color: rgba(0,0,0,0.1);
+}
+[data-theme="light"] .wiki-codeblock-filename,
+.light .wiki-codeblock-filename {
+  background: #1e1e2e;
+  color: #a5adce;
+}

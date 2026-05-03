@@ -10,6 +10,14 @@
 import { create } from 'zustand'
 import * as api from './mcp-client'
 
+function normalizeMcpErrorMessage(err) {
+  const msg = String(err?.message || 'Unknown MCP error')
+  if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+    return 'MCP warning: ck8t-server is not reachable. Start ck8t-server to load MCP servers and tools.'
+  }
+  return msg
+}
+
 export const useMcpStore = create((set, get) => ({
   servers: [],                // McpServerConfig[]
   toolsByServer: {},          // { [serverId]: Tool[] }
@@ -24,7 +32,7 @@ export const useMcpStore = create((set, get) => ({
       const servers = await api.listServers()
       set({ servers: servers || [], loading: false, fetched: true })
     } catch (e) {
-      set({ loading: false, error: e.message, fetched: true })
+      set({ loading: false, error: normalizeMcpErrorMessage(e), fetched: true })
     }
   },
 
@@ -65,7 +73,7 @@ export const useMcpStore = create((set, get) => ({
     } catch (e) {
       // Record the error against the server so the UI can show it, but don't
       // throw — the dropdown should still render (just empty).
-      set({ error: `${id}: ${e.message}` })
+      set({ error: `${id}: ${normalizeMcpErrorMessage(e)}` })
       return []
     }
   },

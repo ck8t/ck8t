@@ -38,6 +38,12 @@ export default function McpServersPanel() {
   const [toolsFor, setToolsFor] = useState(null) // expanded server id
   const [pendingDelete, setPendingDelete] = useState(null) // server id awaiting confirm
 
+  const isWarn = typeof error === 'string' && (
+    /MCP warning:/i.test(error) ||
+    /not reachable/i.test(error) ||
+    /server not reachable/i.test(error)
+  )
+
   useEffect(() => { refresh() }, [refresh])
 
   async function handleSave() {
@@ -90,7 +96,7 @@ export default function McpServersPanel() {
         </div>
       </div>
 
-      {error && <div className="bs-mcp-error">{error}</div>}
+      {error && <div className={isWarn ? 'bs-mcp-warn' : 'bs-mcp-error'}>{error}</div>}
 
       {servers.length === 0 && !loading && !editing && (
         <div className="bs-hint">

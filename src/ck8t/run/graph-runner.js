@@ -18,6 +18,8 @@
  * outputs.
  */
 import { runAgent } from '../api/run-client'
+import { detectServer } from '../api/server-status'
+import { useBrowserProvidersStore } from '../api/browser-providers-store'
 import { callTool as callMcpTool } from '../mcp/mcp-client'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useWorkflowStore } from '../stores/workflow-store'
@@ -462,6 +464,8 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
       } catch (err) {
         const errorDetail = {
           message: err.message || String(err),
+          ...(err.errorDetail && typeof err.errorDetail === 'object' ? err.errorDetail : {}),
+          ...(err.llmFallback ? { llmFallback: err.llmFallback } : {}),
           ...(err.url && { url: err.url }),
           ...(err.resolvedUrl && { resolvedUrl: err.resolvedUrl }),
           ...(err.method && { method: err.method }),
@@ -646,6 +650,173 @@ function parseJsonSafe(v) {
  * The VS Code extension bridge always proxies through its local Express server, so
  * Copilot models never reach this function (no apiKey/baseUrl on their store entries).
  */
+
+/**
+ * Unified LLM call helper used by all agent-like nodes (agent, ai_classifier, router_v2).
+ *
+ * Flow:
+ *   1. Look up modelEntry from llmState (may or may not have apiKey/baseUrl).
+ *   2. Try a direct browser → LLM API call.
+ *   3. If that fails (no credentials on model entry), look up the provider that
+ *      owns this model directly from useBrowserProvidersStore — the authoritative
+ *      source of apiKey/chatUrl — and try again with a synthetic model entry.
+ *   4. If still no direct path AND ck8t-server is available → route through
+ *      ck8t-server (→ Spring Boot). Never talk to Spring Boot directly.
+ *   5. If ck8t-server also offline → throw a friendly browser-mode error.
+ */
+async function callLlmWithFallback(agent, inputStr, nodeTitle) {
+  let directResult = null
+  const debugScope = `[ck8t][llm-fallback][${nodeTitle || agent.id}]`
+  const fallbackDebug = {
+    nodeTitle: nodeTitle || agent.id,
+    model: agent.model,
+    requestedProvider: agent.provider || null,
+    attempts: [],
+  }
+  const pushAttempt = (entry) => {
+    fallbackDebug.attempts.push({ at: new Date().toISOString(), ...entry })
+  }
+  const withFallbackDebug = (err) => {
+    if (err && typeof err === 'object') {
+      err.errorDetail = { ...(err.errorDetail || {}), llmFallback: fallbackDebug }
+      err.llmFallback = fallbackDebug
+    }
+    return err
+  }
+  const hasProviderKey = Boolean(agent.provider)
+  console.info(debugScope, {
+    step: 'start',
+    model: agent.model,
+    provider: agent.provider || null,
+    hasProviderKey,
+  })
+  pushAttempt({
+    step: 'start',
+    model: agent.model,
+    provider: agent.provider || null,
+    hasProviderKey,
+  })
+
+  // ── Attempt 1: browser providers store (always authoritative for browser mode)
+  try {
+    const bps = useBrowserProvidersStore.getState()
+    await bps.hydrate()
+    // Prefer exact provider-key match first (agent.provider), then model membership.
+    // This avoids false negatives when cachedModels is stale/empty but provider creds exist.
+    const owningProvider =
+      bps.providers.find((p) => p.key === agent.provider) ||
+      bps.providers.find((p) => Array.isArray(p.cachedModels) && p.cachedModels.includes(agent.model))
+    console.info(debugScope, {
+      step: 'attempt1_browser_store_match',
+      matchedProviderKey: owningProvider?.key || null,
+      providerType: owningProvider?.type || null,
+      hasApiKey: Boolean(owningProvider?.apiKey),
+      hasChatUrl: Boolean(owningProvider?.chatUrl),
+      providersCount: Array.isArray(bps.providers) ? bps.providers.length : 0,
+    })
+    pushAttempt({
+      step: 'attempt1_browser_store_match',
+      matchedProviderKey: owningProvider?.key || null,
+      providerType: owningProvider?.type || null,
+      hasApiKey: Boolean(owningProvider?.apiKey),
+      hasChatUrl: Boolean(owningProvider?.chatUrl),
+      providersCount: Array.isArray(bps.providers) ? bps.providers.length : 0,
+    })
+    if (owningProvider) {
+      let baseUrl = ''
+      if (owningProvider.chatUrl) {
+        try { baseUrl = new URL(owningProvider.chatUrl).origin } catch { baseUrl = '' }
+      }
+      directResult = await tryDirectLlmCall(agent, {
+        id:           agent.model,
+        provider:     owningProvider.key,
+        providerType: owningProvider.type || 'openai',
+        apiKey:       owningProvider.apiKey  || undefined,
+        baseUrl:      baseUrl               || undefined,
+        chatUrl:      owningProvider.chatUrl || undefined,
+      })
+      console.info(debugScope, {
+        step: 'attempt1_browser_store_result',
+        directResult: directResult ? 'success' : 'null',
+      })
+      pushAttempt({
+        step: 'attempt1_browser_store_result',
+        directResult: directResult ? 'success' : 'null',
+      })
+    }
+  } catch (e) {
+    const msg = e?.message || String(e)
+    // Provider returned a real HTTP error (e.g. 400 validation): do not mask it.
+    if (/^(LLM|Anthropic)\s\d+:/.test(msg)) throw withFallbackDebug(e)
+    console.warn(debugScope, {
+      step: 'attempt1_browser_store_error',
+      message: msg,
+    })
+    pushAttempt({ step: 'attempt1_browser_store_error', message: msg })
+  }
+
+  // ── Attempt 2: llm-config-store model entry (server mode fast path) ───────
+  if (directResult === null) {
+    const modelEntry = useLlmConfigStore.getState().models.find((m) => m.id === agent.model)
+    console.info(debugScope, {
+      step: 'attempt2_llm_store_match',
+      matchedProviderKey: modelEntry?.provider || null,
+      providerType: modelEntry?.providerType || null,
+      hasApiKey: Boolean(modelEntry?.apiKey),
+      hasBaseUrl: Boolean(modelEntry?.baseUrl),
+      hasChatUrl: Boolean(modelEntry?.chatUrl),
+    })
+    pushAttempt({
+      step: 'attempt2_llm_store_match',
+      matchedProviderKey: modelEntry?.provider || null,
+      providerType: modelEntry?.providerType || null,
+      hasApiKey: Boolean(modelEntry?.apiKey),
+      hasBaseUrl: Boolean(modelEntry?.baseUrl),
+      hasChatUrl: Boolean(modelEntry?.chatUrl),
+    })
+    try {
+      directResult = await tryDirectLlmCall(agent, modelEntry)
+      console.info(debugScope, {
+        step: 'attempt2_llm_store_result',
+        directResult: directResult ? 'success' : 'null',
+      })
+      pushAttempt({
+        step: 'attempt2_llm_store_result',
+        directResult: directResult ? 'success' : 'null',
+      })
+    } catch (e) {
+      const msg = e?.message || String(e)
+      // Provider returned a real HTTP error (e.g. 400 validation): do not mask it.
+      if (/^(LLM|Anthropic)\s\d+:/.test(msg)) throw withFallbackDebug(e)
+      console.warn(debugScope, {
+        step: 'attempt2_llm_store_error',
+        message: msg,
+      })
+      pushAttempt({ step: 'attempt2_llm_store_error', message: msg })
+    }
+  }
+
+  // ── Attempt 3: proxy through ck8t-server → Spring Boot ───────────────────
+  if (directResult === null) {
+    const serverUp = await detectServer()
+    console.info(debugScope, {
+      step: 'attempt3_server_proxy_gate',
+      serverUp,
+    })
+    pushAttempt({ step: 'attempt3_server_proxy_gate', serverUp })
+    if (!serverUp) {
+      throw withFallbackDebug(new Error(
+        `No API key or base URL configured for "${nodeTitle || agent.id}" (model: ${agent.model}).\n` +
+        'In browser mode, open Settings → Custom LLM Providers and add a provider with an API key.'
+      ))
+    }
+    const proxied = await runAgent({ agent, input: inputStr })
+    pushAttempt({ step: 'attempt3_server_proxy_result', directResult: 'server' })
+    return { response: proxied, debug: fallbackDebug }
+  }
+  return { response: directResult, debug: fallbackDebug }
+}
+
 async function tryDirectLlmCall(agent, modelEntry) {
   if (!modelEntry) return null
 
@@ -684,10 +855,14 @@ async function tryDirectLlmCall(agent, modelEntry) {
     return { output: data.content?.map((c) => c.text).join('') ?? '', model, ms: Date.now() - t0 }
   }
 
-  // ── OpenAI-compatible (OpenAI, LM Studio, Ollama /v1, Groq, custom) ────
-  const chatUrl = baseUrl
-    ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
-    : 'https://api.openai.com/v1/chat/completions'
+  // ── OpenAI-compatible (OpenAI, LM Studio, Ollama /v1, Grok, Mistral, DeepSeek, Gemini, Qwen …) ──
+  // Use the stored chatUrl directly when present — needed for providers whose path
+  // differs from /v1/chat/completions (e.g. Gemini: /v1beta/openai/chat/completions,
+  // Qwen: /compatible-mode/v1/chat/completions).
+  const chatUrl = modelEntry.chatUrl ||
+    (baseUrl
+      ? `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`
+      : 'https://api.openai.com/v1/chat/completions')
 
   const messages = []
   if (agent.systemPrompt) messages.push({ role: 'system', content: agent.systemPrompt })
@@ -769,7 +944,13 @@ async function runAgentNode({ node, values, input }) {
         inputStr = JSON.stringify({ skillError: e.message || String(e), input: inputStr })
         bag.skillError = e.message || String(e)
         bag.input = inputStr
-        skillRuns.push({ skillId: sid, name: skill.name, params, error: e.message || String(e) })
+        skillRuns.push({
+          skillId: sid,
+          name: skill.name,
+          params,
+          error: e.message || String(e),
+          errorDetail: e?.errorDetail || null,
+        })
       }
     }
   }
@@ -842,15 +1023,11 @@ async function runAgentNode({ node, values, input }) {
   // When the active model entry in the store has apiKey + baseUrl (or is a
   // local no-auth provider like Ollama / LM Studio), call the LLM API directly
   // from the browser without going through ck8t-server / convengine-demo.
-  // Falls through to the server call if not configured for direct access.
-  const modelEntry = llmState.models.find((m) => m.id === resolvedModel)
-  let directResult = null
-  try {
-    directResult = await tryDirectLlmCall(agent, modelEntry)
-  } catch {
-    // CORS / network error on direct browser call — fall through to server proxy
-  }
-  const res = directResult ?? await runAgent(llmRequest)
+  // ─── Direct browser-side LLM call with ck8t-server fallback ─────────────
+  // Uses callLlmWithFallback: tries direct API call first, then routes through
+  // ck8t-server (→ Spring Boot) if available, throws friendly error if offline.
+  const nodeTitle = node.data?.title || node.id
+  const { response: res, debug: llmFallback } = await callLlmWithFallback(agent, inputStr, nodeTitle)
   return {
     __meta: {
       model: agent.model,
@@ -864,6 +1041,7 @@ async function runAgentNode({ node, values, input }) {
       rawAgentResponse: res,
       llmRequest,
       llmResponse: res,
+      llmFallback,
     },
     value: {
       data: res.output,
@@ -887,12 +1065,46 @@ async function runAgentNode({ node, values, input }) {
  * Non-extension (Vite dev / browser) context: returns the native fetch so
  * skills work identically outside the extension.
  */
+function buildSkillFetchError(url, opts, err, extra = {}) {
+  const message = err?.message || String(err)
+  const rich = new Error(`Failed to fetch ${url}`)
+  rich.cause = err
+  rich.url = url
+  rich.method = (opts?.method || 'GET').toUpperCase()
+  rich.errorDetail = {
+    message: rich.message,
+    cause: message,
+    hint: extra.mode === 'browser-direct'
+      ? 'Cross-origin fetch blocked in browser mode. Start ck8t-server to use the proxy for web scraping skills.'
+      : 'Skill fetch failed before a response was received.',
+    skillFetch: {
+      mode: extra.mode || 'unknown',
+      requestedUrl: url,
+      method: rich.method,
+      proxyUrl: extra.proxyUrl || null,
+      proxyBase: extra.proxyBase || null,
+      browserMode: extra.mode === 'browser-direct',
+      failure: message,
+    },
+  }
+  return rich
+}
+
 export function makeSkillFetch() {
   const base = typeof window !== 'undefined' && window.__CK8T_BRIDGE_BASE__
     ? window.__CK8T_BRIDGE_BASE__
     : null
 
-  if (!base) return typeof fetch !== 'undefined' ? fetch : undefined
+  if (!base) {
+    if (typeof fetch === 'undefined') return undefined
+    return async function skillFetch(url, opts = {}) {
+      try {
+        return await fetch(url, opts)
+      } catch (err) {
+        throw buildSkillFetchError(url, opts, err, { mode: 'browser-direct' })
+      }
+    }
+  }
 
   return async function skillFetch(url, opts = {}) {
     // Only proxy absolute http(s) URLs; relative paths or data: URIs pass through.
@@ -901,7 +1113,12 @@ export function makeSkillFetch() {
         // Simple GET — use the query-param proxy endpoint
         // base already contains /api/v1 (e.g. http://127.0.0.1:PORT/api/v1)
         const proxyUrl = `${base}/ck8t/proxy?url=${encodeURIComponent(url)}`
-        const r = await window.fetch(proxyUrl)
+        let r
+        try {
+          r = await window.fetch(proxyUrl)
+        } catch (err) {
+          throw buildSkillFetchError(url, opts, err, { mode: 'proxy-get', proxyUrl, proxyBase: base })
+        }
         return {
           ok: r.ok,
           status: r.status,
@@ -913,16 +1130,21 @@ export function makeSkillFetch() {
       } else {
         // POST / custom method — use the body-based proxy endpoint
         const proxyUrl = `${base}/ck8t/proxy`
-        const r = await window.fetch(proxyUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            url,
-            method: opts.method || 'POST',
-            headers: opts.headers || {},
-            body: opts.body,
-          }),
-        })
+        let r
+        try {
+          r = await window.fetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              url,
+              method: opts.method || 'POST',
+              headers: opts.headers || {},
+              body: opts.body,
+            }),
+          })
+        } catch (err) {
+          throw buildSkillFetchError(url, opts, err, { mode: 'proxy-post', proxyUrl, proxyBase: base })
+        }
         return {
           ok: r.ok,
           status: r.status,
@@ -933,7 +1155,11 @@ export function makeSkillFetch() {
         }
       }
     }
-    return window.fetch(url, opts)
+    try {
+      return await window.fetch(url, opts)
+    } catch (err) {
+      throw buildSkillFetchError(url, opts, err, { mode: 'browser-direct' })
+    }
   }
 }
 
@@ -1411,7 +1637,8 @@ async function runAiClassifierNode({ node, values, input }) {
   const agent = { id: node.id, model, temperature: 0, systemPrompt, userPrompt: text }
   const inputStr = typeof input === 'string' ? input : JSON.stringify(input)
   try {
-    const res = await runAgent({ agent, input: inputStr })
+    const nodeTitle = node.data?.title || node.id
+    const { response: res } = await callLlmWithFallback(agent, inputStr, nodeTitle)
     const raw = String(res?.output ?? res)
     const parsed = JSON.parse(raw)
     const allScores = {}
@@ -1464,7 +1691,8 @@ async function runRouterV2Node({ node, values, input }) {
   const agent = { id: node.id, model, temperature: 0, systemPrompt, userPrompt: context }
   const inputStr = typeof input === 'string' ? input : JSON.stringify(input)
   try {
-    const res = await runAgent({ agent, input: inputStr })
+    const nodeTitle = node.data?.title || node.id
+    const { response: res } = await callLlmWithFallback(agent, inputStr, nodeTitle)
     const raw = String(res?.output ?? res).trim()
     const matched = routes.find((r) => r.id === raw)
     return { branch: matched ? matched.id : routes[0].id, value: input }

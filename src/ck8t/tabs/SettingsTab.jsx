@@ -12,6 +12,8 @@ import McpServersPanel from './McpServersPanel'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useWorkflowStore } from '../stores/workflow-store'
+import { useBrowserProvidersStore } from '../api/browser-providers-store'
+import { detectServer } from '../api/server-status'
 import StyledSelect from '../components/StyledSelect'
 
 const MOD = /Mac|iPhone|iPad/.test(typeof navigator !== 'undefined' ? navigator.platform : '') ? '⌘' : 'Ctrl'
@@ -287,7 +289,7 @@ function TipsAndTricksSection() {
         <li className="bs-tip">
           <span className="bs-tip-badge bs-tip-badge-mcp">MCP</span>
           <span className="bs-tip-text">
-            Add an MCP server above, drop an <b>MCP Tool</b> block, and use <code>&#123;&#123;input&#125;&#125;</code>
+            With <b>ck8t-server running</b>, add an MCP server above, drop an <b>MCP Tool</b> block, and use <code>&#123;&#123;input&#125;&#125;</code>
             inside the arguments JSON to pipe upstream output into a tool call.
           </span>
         </li>
@@ -297,6 +299,58 @@ function TipsAndTricksSection() {
 }
 
 /* ── Provider SVG brand icons ─────────────────────────────────────── */
+
+const GrokProviderIcon = ({ size = 22, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <rect width="24" height="24" rx="5.5" fill="#18181b" />
+    <path fill="white" fillRule="evenodd" clipRule="evenodd" d="M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815" />
+  </svg>
+)
+
+const MistralProviderIcon = ({ size = 22, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <rect width="24" height="24" rx="5.5" fill="#18181b" />
+    <path d="M3.428 3.4h3.429v3.428H3.428V3.4zm13.714 0h3.43v3.428h-3.43V3.4z" fill="gold" />
+    <path d="M3.428 6.828h6.857v3.429H3.429V6.828zm10.286 0h6.857v3.429h-6.857V6.828z" fill="#FFAF00" />
+    <path d="M3.428 10.258h17.144v3.428H3.428v-3.428z" fill="#FF8205" />
+    <path d="M3.428 13.686h3.429v3.428H3.428v-3.428zm6.858 0h3.429v3.428h-3.429v-3.428zm6.856 0h3.43v3.428h-3.43v-3.428z" fill="#FA500F" />
+    <path d="M0 17.114h10.286v3.429H0v-3.429zm13.714 0H24v3.429H13.714v-3.429z" fill="#E10500" />
+  </svg>
+)
+
+const GeminiProviderIcon = ({ size = 22, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <defs>
+      <linearGradient gradientUnits="userSpaceOnUse" id="ck8t-gem-0" x1="7" x2="11" y1="15.5" y2="12">
+        <stop stopColor="#08B962" /><stop offset="1" stopColor="#08B962" stopOpacity="0" />
+      </linearGradient>
+      <linearGradient gradientUnits="userSpaceOnUse" id="ck8t-gem-1" x1="8" x2="11.5" y1="5.5" y2="11">
+        <stop stopColor="#F94543" /><stop offset="1" stopColor="#F94543" stopOpacity="0" />
+      </linearGradient>
+      <linearGradient gradientUnits="userSpaceOnUse" id="ck8t-gem-2" x1="3.5" x2="17.5" y1="13.5" y2="12">
+        <stop stopColor="#FABC12" /><stop offset=".46" stopColor="#FABC12" stopOpacity="0" />
+      </linearGradient>
+    </defs>
+    <path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" fill="#3186FF" />
+    <path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" fill="url(#ck8t-gem-0)" />
+    <path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" fill="url(#ck8t-gem-1)" />
+    <path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z" fill="url(#ck8t-gem-2)" />
+  </svg>
+)
+
+const DeepSeekProviderIcon = ({ size = 22, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <rect width="24" height="24" rx="5.5" fill="#f0f4ff" />
+    <path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z" fill="#4D6BFE" />
+  </svg>
+)
+
+const QwenProviderIcon = ({ size = 22, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
+    <rect width="24" height="24" rx="5.5" fill="#18181b" />
+    <path fill="white" fillRule="evenodd" clipRule="evenodd" d="M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0zM11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z" />
+  </svg>
+)
 
 const OpenAiProviderIcon = ({ size = 22, ...props }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" {...props}>
@@ -349,12 +403,18 @@ const PROVIDER_META = {
   copilot:   { label: 'GitHub Copilot', Icon: CopilotProviderIcon,   color: '#6e7bf9' },
   anthropic: { label: 'Anthropic',      Icon: AnthropicProviderIcon, color: '#d97706' },
   ollama:    { label: 'Ollama',         Icon: OllamaProviderIcon,    color: '#64748b' },
+  grok:      { label: 'Grok',           Icon: GrokProviderIcon,      color: '#a1a1aa' },
+  mistral:   { label: 'Mistral',        Icon: MistralProviderIcon,   color: '#FF8205' },
+  gemini:    { label: 'Gemini',         Icon: GeminiProviderIcon,    color: '#3186FF' },
+  deepseek:  { label: 'DeepSeek',       Icon: DeepSeekProviderIcon,  color: '#4D6BFE' },
+  qwen:      { label: 'Qwen',           Icon: QwenProviderIcon,      color: '#9333ea' },
 }
 
 /* ── LLM Provider Configuration Panel ────────────────────────────────── */
 
 function LlmConfigPanel({ refreshKey = 0 }) {
   const models = useLlmConfigStore((s) => s.models)
+  const consumerConfig = useLlmConfigStore((s) => s.consumerConfig)
   const defaultModel = useLlmConfigStore((s) => s.defaultModel)
   const activeProvider = useLlmConfigStore((s) => s.activeProvider)
   const setConfig = useLlmConfigStore((s) => s.setConfig)
@@ -370,20 +430,41 @@ function LlmConfigPanel({ refreshKey = 0 }) {
   const [applyResult, setApplyResult] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [confirmReset, setConfirmReset] = useState(false)
+  const [serverMode, setServerMode] = useState(null) // null = probing, true = server, false = browser
 
-  // Derive unique providers from the flat models list
+  // Derive providers from both model entries and raw config keys.
+  // This keeps providers visible even when their model list is currently empty.
   const providers = useMemo(() => {
     const seen = new Set()
     const list = []
-    for (const m of models) {
-      const pk = m.provider || 'unknown'
-      if (!seen.has(pk)) {
-        seen.add(pk)
-        list.push({ key: pk, label: m.group || pk, providerType: m.providerType })
+
+    const reserved = new Set(['provider', 'temperature', 'maxTokens', 'timeout', 'defaults', 'source'])
+    if (consumerConfig && typeof consumerConfig === 'object') {
+      for (const [key, value] of Object.entries(consumerConfig)) {
+        if (reserved.has(key)) continue
+        if (!value || typeof value !== 'object') continue
+        const looksLikeProvider = (
+          value.model ||
+          Array.isArray(value.models) ||
+          value.type ||
+          value.baseUrl || value['base-url'] ||
+          value.chatUrl || value['chat-url']
+        )
+        if (!looksLikeProvider) continue
+        if (seen.has(key)) continue
+        seen.add(key)
+        list.push({ key, label: value.group || value.label || key, providerType: value.type || undefined })
       }
     }
+
+    for (const m of models) {
+      const pk = m.provider || 'unknown'
+      if (seen.has(pk)) continue
+      seen.add(pk)
+      list.push({ key: pk, label: m.group || pk, providerType: m.providerType })
+    }
     return list
-  }, [models])
+  }, [models, consumerConfig])
 
   // Sync selected provider when store loads
   useEffect(() => {
@@ -395,6 +476,8 @@ function LlmConfigPanel({ refreshKey = 0 }) {
     setLoading(true)
     setLoadError('')
     try {
+      const up = await detectServer()
+      setServerMode(up)
       const config = await fetchAvailableProviders()
       setConfig(config)
     } catch (e) {
@@ -483,21 +566,38 @@ function LlmConfigPanel({ refreshKey = 0 }) {
       </div>
 
       {loading && (
-        <div className="bs-llm-config-loading">Loading provider configuration…</div>
+        <div className="bs-llm-config-loading">
+          {serverMode === null ? 'Checking server…' : 'Loading provider configuration…'}
+        </div>
       )}
 
       {!loading && loadError && (
         <div className="bs-llm-config-error">{loadError}</div>
       )}
 
-      {!loading && !loadError && models.length === 0 && (
+      {!loading && serverMode === false && (
+        <div className="bs-llm-server-info">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: '#60a5fa' }}>
+            <circle cx="8" cy="8" r="6.5" />
+            <line x1="8" y1="5" x2="8" y2="5.5" strokeWidth="2.2" />
+            <line x1="8" y1="7.5" x2="8" y2="11.5" />
+          </svg>
+          <span>
+            <strong>Browser mode</strong> — ck8t-server is not running.
+            Add a custom provider below to make direct browser LLM calls.
+            API keys are encrypted in localStorage and never sent to any backend.
+          </span>
+        </div>
+      )}
+
+      {!loading && !loadError && serverMode !== false && models.length === 0 && (
         <div className="bs-llm-config-error">
           No model provider found. Ensure the backend is running and{' '}
           <code>/ck8t/llm/providers</code> returns at least one model.
         </div>
       )}
 
-      {!loading && models.length > 0 && (
+      {!loading && providers.length > 0 && (
         <div className="bs-llm-config-status">
 
           {/* ── Available Providers dropdown ── */}
@@ -632,6 +732,11 @@ function LlmConfigPanel({ refreshKey = 0 }) {
 const PROVIDER_TYPE_OPTIONS = [
   { id: 'openai',    label: 'OpenAI',    icon: <OpenAiProviderIcon size={15} /> },
   { id: 'anthropic', label: 'Anthropic', icon: <AnthropicProviderIcon size={15} /> },
+  { id: 'gemini',    label: 'Gemini',    icon: <GeminiProviderIcon size={15} /> },
+  { id: 'grok',      label: 'Grok',      icon: <GrokProviderIcon size={15} /> },
+  { id: 'mistral',   label: 'Mistral',   icon: <MistralProviderIcon size={15} /> },
+  { id: 'deepseek',  label: 'DeepSeek',  icon: <DeepSeekProviderIcon size={15} /> },
+  { id: 'qwen',      label: 'Qwen',      icon: <QwenProviderIcon size={15} /> },
   { id: 'lmstudio',  label: 'LM Studio', icon: <LmStudioProviderIcon size={15} /> },
   { id: 'ollama',    label: 'Ollama',    icon: <OllamaProviderIcon size={15} /> },
 ]
@@ -639,15 +744,45 @@ const PROVIDER_TYPE_OPTIONS = [
 const PROVIDER_PLACEHOLDERS = {
   openai: {
     name:      'My OpenAI Provider',
-    chatUrl:   'https://<your-host>/v1/chat/completions',
-    modelsUrl: 'https://<your-host>/v1/models',
+    chatUrl:   'https://api.openai.com/v1/chat/completions',
+    modelsUrl: 'https://api.openai.com/v1/models',
     apiKey:    'sk-...',
   },
   anthropic: {
     name:      'My Anthropic Provider',
-    chatUrl:   'https://<your-host>/v1/messages',
-    modelsUrl: 'https://<your-host>/v1/models',
+    chatUrl:   'https://api.anthropic.com/v1/messages',
+    modelsUrl: 'https://api.anthropic.com/v1/models',
     apiKey:    'sk-ant-...',
+  },
+  gemini: {
+    name:      'My Gemini Provider',
+    chatUrl:   'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
+    apiKey:    'AIza...',
+  },
+  grok: {
+    name:      'My Grok Provider',
+    chatUrl:   'https://api.x.ai/v1/chat/completions',
+    modelsUrl: 'https://api.x.ai/v1/models',
+    apiKey:    'xai-...',
+  },
+  mistral: {
+    name:      'My Mistral Provider',
+    chatUrl:   'https://api.mistral.ai/v1/chat/completions',
+    modelsUrl: 'https://api.mistral.ai/v1/models',
+    apiKey:    'sk-...',
+  },
+  deepseek: {
+    name:      'My DeepSeek Provider',
+    chatUrl:   'https://api.deepseek.com/v1/chat/completions',
+    modelsUrl: 'https://api.deepseek.com/v1/models',
+    apiKey:    'sk-...',
+  },
+  qwen: {
+    name:      'My Qwen Provider',
+    chatUrl:   'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    modelsUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/models',
+    apiKey:    'sk-...',
   },
   lmstudio: {
     name:      'My LM Studio Server',
@@ -664,10 +799,15 @@ const PROVIDER_PLACEHOLDERS = {
 }
 
 const HOST_PATHS = {
-  openai:    { chat: '/v1/chat/completions', models: '/v1/models' },
-  anthropic: { chat: '/v1/messages',          models: '/v1/models' },
-  lmstudio:  { chat: '/v1/chat/completions', models: '/v1/models' },
-  ollama:    { chat: '/api/chat',             models: '/api/tags' },
+  openai:    { chat: '/v1/chat/completions',                    models: '/v1/models' },
+  anthropic: { chat: '/v1/messages',                            models: '/v1/models' },
+  gemini:    { chat: '/v1beta/openai/chat/completions',         models: '/v1beta/openai/models' },
+  grok:      { chat: '/v1/chat/completions',                    models: '/v1/models' },
+  mistral:   { chat: '/v1/chat/completions',                    models: '/v1/models' },
+  deepseek:  { chat: '/v1/chat/completions',                    models: '/v1/models' },
+  qwen:      { chat: '/compatible-mode/v1/chat/completions',    models: '/compatible-mode/v1/models' },
+  lmstudio:  { chat: '/v1/chat/completions',                    models: '/v1/models' },
+  ollama:    { chat: '/api/chat',                               models: '/api/tags' },
 }
 
 function deriveUrlsFromHost(host, type) {
@@ -699,6 +839,10 @@ function CustomProviderPanel({ onChanged } = {}) {
   const [deletingKey, setDeletingKey] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [editingKey, setEditingKey] = useState(null)
+  const [serverMode, setServerMode] = useState(null) // null = probing
+
+  // Subscribe to browser store so list stays in sync in browser mode
+  const browserProviders = useBrowserProvidersStore((s) => s.providers)
 
   const openAdd = useCallback(() => {
     setEditingKey(null)
@@ -732,6 +876,8 @@ function CustomProviderPanel({ onChanged } = {}) {
 
   const loadProviders = useCallback(async () => {
     try {
+      const up = await detectServer()
+      setServerMode(up)
       const data = await fetchCustomProviders()
       setProviders(data)
     } catch (e) {
@@ -742,6 +888,11 @@ function CustomProviderPanel({ onChanged } = {}) {
   }, [])
 
   useEffect(() => { loadProviders() }, [loadProviders])
+
+  // Keep local list in sync with the browser store (browser mode only)
+  useEffect(() => {
+    if (serverMode === false) setProviders(browserProviders)
+  }, [browserProviders, serverMode])
 
   const handleSave = async () => {
     setFormError('')
@@ -814,6 +965,19 @@ function CustomProviderPanel({ onChanged } = {}) {
       <div className="bs-settings-section-head">
         <LlmIcon className="bs-ico-sm" />
         <h3 className="bs-settings-h3">Custom LLM Providers</h3>
+        {serverMode !== null && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+            padding: '2px 8px', borderRadius: 6,
+            background: serverMode ? 'rgba(34,197,94,0.12)' : 'rgba(96,165,250,0.12)',
+            color: serverMode ? '#22c55e' : '#60a5fa',
+            border: `1px solid ${serverMode ? 'rgba(34,197,94,0.3)' : 'rgba(96,165,250,0.3)'}`,
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', display: 'inline-block' }} />
+            {serverMode ? 'Server' : 'Browser'}
+          </span>
+        )}
         <button
           className="bs-btn-sm bs-btn-secondary bs-custom-provider-add-btn"
           onClick={showForm ? handleCancel : openAdd}
@@ -852,7 +1016,17 @@ function CustomProviderPanel({ onChanged } = {}) {
               Host
               <input
                 className="bs-custom-provider-input"
-                placeholder={form.type === 'ollama' ? 'http://localhost:11434' : form.type === 'lmstudio' ? 'http://127.0.0.1:1234' : 'https://api.openai.com'}
+                placeholder={
+                  form.type === 'ollama'    ? 'http://localhost:11434' :
+                  form.type === 'lmstudio'  ? 'http://127.0.0.1:1234' :
+                  form.type === 'gemini'    ? 'https://generativelanguage.googleapis.com' :
+                  form.type === 'grok'      ? 'https://api.x.ai' :
+                  form.type === 'mistral'   ? 'https://api.mistral.ai' :
+                  form.type === 'deepseek'  ? 'https://api.deepseek.com' :
+                  form.type === 'qwen'      ? 'https://dashscope.aliyuncs.com' :
+                  form.type === 'anthropic' ? 'https://api.anthropic.com' :
+                  'https://api.openai.com'
+                }
                 value={form.host}
                 onChange={(e) => {
                   const host = e.target.value

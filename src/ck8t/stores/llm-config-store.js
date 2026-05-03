@@ -39,21 +39,16 @@ import { create } from 'zustand'
 
 /* ── Well-known provider group names ─────────────────────────────────── */
 const PROVIDER_GROUP_MAP = {
-  copilot: 'GitHub Copilot',
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  google: 'Google',
-  xai: 'xAI',
+  copilot:  'GitHub Copilot',
+  openai:   'OpenAI',
+  anthropic:'Anthropic',
+  gemini:   'Gemini',
+  grok:     'Grok',
   deepseek: 'DeepSeek',
+  mistral:  'Mistral',
+  qwen:     'Qwen',
   lmstudio: 'LM Studio',
-  ollama: 'Ollama',
-  azure: 'Azure OpenAI',
-  mistral: 'Mistral',
-  groq: 'Groq',
-  together: 'Together AI',
-  fireworks: 'Fireworks AI',
-  cohere: 'Cohere',
-  perplexity: 'Perplexity',
+  ollama:   'Ollama',
 }
 
 function humanizeProvider(key) {
@@ -78,6 +73,7 @@ function deriveModelsFromConfig(config) {
     if (value && typeof value === 'object' && (value.model || Array.isArray(value.models))) {
       const baseUrl = value.baseUrl || value['base-url'] || undefined
       const apiKey  = value.apiKey  || value['api-key']  || undefined
+      const chatUrl = value.chatUrl || value['chat-url'] || undefined
       const group   = humanizeProvider(key)
 
       // If the provider supplies a full models array of objects, use that list
@@ -97,6 +93,7 @@ function deriveModelsFromConfig(config) {
           providerType: value.type || undefined,
           baseUrl,
           apiKey,
+          chatUrl,
         })
       }
 
@@ -116,6 +113,7 @@ function deriveModelsFromConfig(config) {
               providerType: value.type || undefined,
               baseUrl,
               apiKey,
+              chatUrl,
             })
           } else if (m && typeof m === 'object' && m.id) {
             if (seenInProvider.has(m.id)) continue
@@ -129,6 +127,7 @@ function deriveModelsFromConfig(config) {
               providerType: value.type || undefined,
               baseUrl,
               apiKey,
+              chatUrl,
             })
           }
         }
