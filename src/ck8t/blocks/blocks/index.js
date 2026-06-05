@@ -42,3 +42,7 @@ export { SlackBlock } from './slack'
 export { AiClassifierBlock } from './ai_classifier'
 export { MapperBlock } from './mapper'
 export { SkillBlock } from './skill'
+// Multi-agent orchestration blocks (Sprint 16)
+export { ChainOfThoughtBlock } from './chain_of_thought'
+export { MasterAgentBlock } from './master_agent'
+export { SlaveAgentBlock } from './slave_agent'

@@ -67,6 +67,14 @@ const initialState = {
   agents:    seedAgents,
   skills:    seedSkills,
   workflows: [demoWorkflow],
+  /**
+   * Master/slave canvas registry — tracks which slave_agent blocks are
+   * registered to which master_agent block.
+   *
+   * Shape: { [masterId: string]: SlaveRegistration[] }
+   * SlaveRegistration: { slaveId: string, capability: string, blockNodeId: string }
+   */
+  masterSlaveRegistry: {},
 }
 
 export const useWorkspaceStore = create()(
@@ -74,6 +82,82 @@ export const useWorkspaceStore = create()(
     persist(
       (set, get) => ({
         ...initialState,
+
+        // ---------- Master/Slave Registry ----------
+        /**
+         * Register a slave_agent block to a master_agent block.
+         *
+         * @param {string} masterId     - Canvas node ID of the master_agent
+         * @param {string} slaveId      - Canvas node ID of the slave_agent
+         * @param {string} capability   - The slave's capabilityLabel value
+         * @param {string} blockNodeId  - Same as slaveId (kept for schema parity with NS9)
+         */
+        registerSlaveToMaster(masterId, slaveId, capability, blockNodeId) {
+          set((s) => ({
+            masterSlaveRegistry: {
+              ...s.masterSlaveRegistry,
+              [masterId]: [
+                ...(s.masterSlaveRegistry[masterId] ?? []).filter((r) => r.slaveId !== slaveId),
+                { slaveId, capability, blockNodeId: blockNodeId ?? slaveId },
+              ],
+            },
+          }))
+        },
+
+        /**
+         * Remove a slave registration from a master.
+         *
+         * @param {string} masterId  - Canvas node ID of the master_agent
+         * @param {string} slaveId   - Canvas node ID of the slave_agent to remove
+         */
+        unregisterSlave(masterId, slaveId) {
+          set((s) => ({
+            masterSlaveRegistry: {
+              ...s.masterSlaveRegistry,
+              [masterId]: (s.masterSlaveRegistry[masterId] ?? []).filter(
+                (r) => r.slaveId !== slaveId
+              ),
+            },
+          }))
+        },
+
+        /**
+         * Remove all slave registrations for a given master.
+         * Called when a master_agent node is deleted from the canvas.
+         *
+         * @param {string} masterId
+         */
+        unregisterAllSlaves(masterId) {
+          set((s) => {
+            const { [masterId]: _dropped, ...rest } = s.masterSlaveRegistry
+            return { masterSlaveRegistry: rest }
+          })
+        },
+
+        /**
+         * Return the list of slaves registered to a master.
+         * Returns [] if the master has no registered slaves.
+         *
+         * @param {string} masterId
+         * @returns {Array<{slaveId: string, capability: string, blockNodeId: string}>}
+         */
+        getSlavesForMaster(masterId) {
+          return get().masterSlaveRegistry[masterId] ?? []
+        },
+
+        /**
+         * Return the master ID that a given slave is registered to, or null.
+         *
+         * @param {string} slaveId
+         * @returns {string|null}
+         */
+        getMasterForSlave(slaveId) {
+          const registry = get().masterSlaveRegistry
+          for (const [masterId, slaves] of Object.entries(registry)) {
+            if (slaves.some((r) => r.slaveId === slaveId)) return masterId
+          }
+          return null
+        },
 
         // ---------- Teams ----------
         createTeam(name) {

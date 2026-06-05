@@ -11,7 +11,7 @@
  * (Both are suppressed while typing inside inputs/textareas/contentEditable.)
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, useReactFlow } from 'reactflow'
+import ReactFlow, { Background, Controls, MiniMap, ReactFlowProvider, useReactFlow, useViewport } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { DeployIcon, PlayIcon } from '../components/icons'
@@ -26,6 +26,7 @@ import ContextMenu from '../sidenav/ContextMenu'
 import ImportWorkflowModal from '../components/ImportWorkflowModal'
 import { parseImportedWorkflowJSON } from '../utils/import-workflow'
 import { EDGE as EDGE_CONFIG } from './canvas-visual.config'
+import { MasterSlaveGroupOverlay, useMasterSlaveDropTarget } from './MasterSlaveGroupOverlay'
 
 const nodeTypes = { builderBlock: WorkflowNode }
 const edgeTypes = { gradient: GradientEdge }
@@ -118,6 +119,10 @@ function ZoomResetIcon({ className }) {
 function CanvasInner() {
   const wrapperRef = useRef(null)
   const { screenToFlowPosition, fitView, zoomTo, setNodes: rfSetNodes } = useReactFlow()
+  const viewport = useViewport()   // { x, y, zoom } — used by MasterSlaveGroupOverlay
+
+  // ── Master/slave drop registration hook ──────────────────────────────────
+  const { tryMasterSlaveRegister } = useMasterSlaveDropTarget({ nodes, getBlock })
   const nodes = useWorkflowStore((s) => s.nodes)
   const edges = useWorkflowStore((s) => s.edges)
   const onNodesChange = useWorkflowStore((s) => s.onNodesChange)
@@ -579,9 +584,13 @@ function CanvasInner() {
       const cfg = getBlock(blockType)
       if (!cfg) return
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
-      addNode(blockType, position, cfg)
+      const newNode = addNode(blockType, position, cfg)
+      // Auto-register slave_agent blocks that land on a master_agent node
+      if (newNode?.id) {
+        tryMasterSlaveRegister(e, blockType, position, newNode.id)
+      }
     },
-    [addNode, screenToFlowPosition]
+    [addNode, screenToFlowPosition, tryMasterSlaveRegister]
   )
 
   function handleJsonDropConfirm(name, teamId) {
@@ -826,6 +835,8 @@ function CanvasInner() {
         noWheelClassName="nowheel"
         proOptions={{ hideAttribution: true }}
       >
+        {/* ── Master/slave compound node group overlay ── */}
+        <MasterSlaveGroupOverlay nodes={nodes} viewport={viewport} />
         <Background gap={18} size={1.2} color="var(--ce-border)" />
         <Controls showInteractive={false} />
         {showMinimap && (

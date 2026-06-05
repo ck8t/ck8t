@@ -147,6 +147,19 @@ const CARD_PORT_DEFAULTS: Record<string, { inputs: PortDef[]; outputs: PortDef[]
   mongodb:       { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'json' }, { key: 'count', type: 'number' }, { key: 'insertedId', type: 'string' }] },
   redis:         { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'result', type: 'any' }, { key: 'success', type: 'boolean' }] },
   slack:         { inputs: [{ key: 'input', type: 'string' }], outputs: [{ key: 'ok', type: 'boolean' }, { key: 'ts', type: 'string' }] },
+  // Multi-agent orchestration (Sprint 16)
+  chain_of_thought: {
+    inputs:  [{ key: 'question', type: 'string' }, { key: 'context', type: 'json' }],
+    outputs: [{ key: 'reasoning_steps', type: 'array' }, { key: 'conclusion', type: 'string' }, { key: 'confidence', type: 'number' }, { key: 'full_response', type: 'json' }],
+  },
+  master_agent: {
+    inputs:  [{ key: 'question', type: 'string' }, { key: 'context', type: 'json' }],
+    outputs: [{ key: 'final_answer', type: 'string' }, { key: 'slave_outputs', type: 'json' }, { key: 'cot_plan', type: 'json' }, { key: 'confidence', type: 'number' }],
+  },
+  slave_agent: {
+    inputs:  [{ key: 'task', type: 'string' }, { key: 'context', type: 'json' }],
+    outputs: [{ key: 'answer', type: 'string' }, { key: 'cited_nodes', type: 'array' }, { key: 'confidence', type: 'number' }, { key: 'needs_clarification', type: 'boolean' }],
+  },
 };
 
 function hasCardInputs(blockType: string): boolean {
@@ -1064,6 +1077,385 @@ async function runRouterV2Node(opts: {
   }
 }
 
+// --- Chain of Thought Node ---------------------------------------------------
+
+/**
+ * runChainOfThoughtNode
+ *
+ * Instructs the LLM to produce a numbered reasoning scratchpad before committing
+ * to a final answer.  Returns a structured object with:
+ *   reasoning_steps  string[]  — numbered thinking steps
+ *   conclusion       string    — the final answer
+ *   confidence       number    — 0–1 self-assessed confidence
+ *   full_response    object    — raw LLM JSON for trace debugging
+ */
+async function runChainOfThoughtNode(opts: {
+  node: WorkflowNode;
+  values: Record<string, unknown>;
+  input: unknown;
+}): Promise<{ reasoning_steps: string[]; conclusion: string; confidence: number; full_response: unknown }> {
+  const { node, values, input } = opts;
+
+  const question = String(
+    values.question ||
+    (typeof input === 'string' ? input : JSON.stringify(input ?? ''))
+  );
+
+  const contextStr = values.context
+    ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context))
+    : '';
+
+  const effort = String(values.effort || 'medium');
+  const stepCount = effort === 'low' ? '2–3' : effort === 'high' ? '6–8' : '4–5';
+
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) {
+    const nodeTitle = String(node.data?.title || node.id);
+    throw new GraphValidationError(
+      `No model configured for Chain of Thought block "${nodeTitle}"`,
+      { nodeId: node.id, nodeTitle, blockType: 'chain_of_thought', severity: 'error',
+        hint: 'Open Settings → LLM Provider Configuration and select a default model.' },
+    );
+  }
+
+  const systemPrompt =
+    `You are a careful reasoning engine. When given a question you MUST:\n` +
+    `1. Write ${stepCount} numbered reasoning steps (prefix each with "Step N: ...")\n` +
+    `2. State a final conclusion\n` +
+    `3. Rate your confidence 0–1\n\n` +
+    `Respond ONLY with valid JSON:\n` +
+    `{\n` +
+    `  "reasoning_steps": ["Step 1: ...", "Step 2: ...", ...],\n` +
+    `  "conclusion": "...",\n` +
+    `  "confidence": 0.85\n` +
+    `}`;
+
+  const userPrompt = contextStr
+    ? `Context:\n${contextStr}\n\nQuestion:\n${question}`
+    : question;
+
+  const agent = { id: node.id, model: rawModel, temperature: 0.2, systemPrompt, userPrompt };
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    const res = await callAgent({ agent, input: inputStr });
+    const raw = String((res as { output?: unknown })?.output ?? res ?? '').trim();
+    const jsonStr = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    // Graceful degradation — treat the raw LLM text as the conclusion.
+    return {
+      reasoning_steps: [],
+      conclusion: String((await callAgent({ agent, input: inputStr }) as { output?: unknown })?.output ?? ''),
+      confidence: 0.5,
+      full_response: parsed,
+    };
+  }
+
+  const steps = Array.isArray(parsed.reasoning_steps) ? (parsed.reasoning_steps as string[]) : [];
+  const conclusion = String(parsed.conclusion ?? '');
+  const confidence = Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5)));
+
+  return { reasoning_steps: steps, conclusion, confidence, full_response: parsed };
+}
+
+// --- Slave Agent Node --------------------------------------------------------
+
+/**
+ * runSlaveAgentNode
+ *
+ * Runs a slave_agent as a standalone agent call (when executed outside of a
+ * master_agent context — e.g. during development or testing).  Uses the slave's
+ * system prompt + output schema to produce a structured answer.
+ */
+async function runSlaveAgentNode(opts: {
+  node: WorkflowNode;
+  values: Record<string, unknown>;
+  input: unknown;
+}): Promise<{ answer: string; cited_nodes: string[]; confidence: number; needs_clarification: boolean }> {
+  const { node, values, input } = opts;
+
+  const task = String(
+    values.task ||
+    (typeof input === 'string' ? input : JSON.stringify(input ?? ''))
+  );
+
+  const contextStr = values.context
+    ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context))
+    : '';
+
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) {
+    const nodeTitle = String(node.data?.title || node.id);
+    throw new GraphValidationError(
+      `No model configured for Slave Agent block "${nodeTitle}"`,
+      { nodeId: node.id, nodeTitle, blockType: 'slave_agent', severity: 'error',
+        hint: 'Open Settings → LLM Provider Configuration and select a default model.' },
+    );
+  }
+
+  const capabilityLabel = String(values.capabilityLabel || 'specialist');
+  const systemPrompt = String(
+    values.systemPrompt ||
+    `You are a specialist agent (${capabilityLabel}). Answer the given task concisely. ` +
+    `Respond with JSON: {"answer":"...","cited_nodes":[],"confidence":0.8,"needs_clarification":false}`
+  );
+
+  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nTask:\n${task}` : task;
+  const agent = { id: node.id, model: rawModel, temperature: 0.3, systemPrompt, userPrompt };
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+
+  try {
+    const res = await callAgent({ agent, input: inputStr });
+    const raw = String((res as { output?: unknown })?.output ?? res ?? '').trim();
+    const jsonStr = raw.replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    const parsed = JSON.parse(jsonStr);
+    return {
+      answer: String(parsed.answer ?? raw),
+      cited_nodes: Array.isArray(parsed.cited_nodes) ? parsed.cited_nodes : [],
+      confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.7))),
+      needs_clarification: Boolean(parsed.needs_clarification ?? false),
+    };
+  } catch {
+    return { answer: task, cited_nodes: [], confidence: 0.5, needs_clarification: false };
+  }
+}
+
+// --- Master Agent Node -------------------------------------------------------
+
+/** Internal CoT plan step used by the master agent dispatcher. */
+interface MasterCotStep {
+  id: string;
+  sub_question: string;
+  capability: string;
+  depends_on: string[];
+}
+
+/**
+ * topoSortSteps — split plan steps into execution layers.
+ * Steps in the same layer have no dependencies on each other and can run in parallel.
+ */
+function topoSortSteps(steps: MasterCotStep[]): MasterCotStep[][] {
+  const layers: MasterCotStep[][] = [];
+  const resolved = new Set<string>();
+  let remaining = [...steps];
+  let safetyCounter = 0;
+  const maxIterations = steps.length + 2;
+
+  while (remaining.length > 0 && safetyCounter < maxIterations) {
+    safetyCounter++;
+    const ready = remaining.filter((s) => s.depends_on.every((dep) => resolved.has(dep)));
+    if (ready.length === 0) {
+      // Circular or unresolvable — flush remaining as final layer
+      layers.push(remaining);
+      break;
+    }
+    layers.push(ready);
+    ready.forEach((s) => resolved.add(s.id));
+    remaining = remaining.filter((s) => !resolved.has(s.id));
+  }
+  return layers;
+}
+
+/**
+ * runMasterAgentNode
+ *
+ * 1. Parses question + context from block values / input.
+ * 2. Calls LLM to produce a CoT dispatch plan (JSON with steps[]).
+ * 3. Resolves registered slave_agent nodes from the workflow graph.
+ * 4. Topo-sorts steps into parallel execution layers.
+ * 5. Dispatches each layer in parallel using Promise.allSettled.
+ * 6. Optionally re-plans when a slave returns needs_clarification=true.
+ * 7. Calls LLM for final synthesis.
+ * 8. Returns {final_answer, slave_outputs, cot_plan, confidence}.
+ */
+async function runMasterAgentNode(opts: {
+  node: WorkflowNode;
+  values: Record<string, unknown>;
+  input: unknown;
+  allNodes: WorkflowNode[];
+  subBlockValues: Record<string, Record<string, unknown>>;
+}): Promise<{ final_answer: string; slave_outputs: Record<string, unknown>; cot_plan: unknown; confidence: number }> {
+  const { node, values, input, allNodes, subBlockValues } = opts;
+
+  const question = String(
+    values.question ||
+    (typeof input === 'string' ? input : JSON.stringify(input ?? ''))
+  );
+
+  const contextStr = values.context
+    ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context))
+    : '';
+
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) {
+    const nodeTitle = String(node.data?.title || node.id);
+    throw new GraphValidationError(
+      `No model configured for Master Agent block "${nodeTitle}"`,
+      { nodeId: node.id, nodeTitle, blockType: 'master_agent', severity: 'error',
+        hint: 'Open Settings → LLM Provider Configuration and select a default model.' },
+    );
+  }
+
+  // ── Discover registered slave nodes from the workflow graph ─────────────────
+  // Slaves register via workspace-store; at runtime we discover them by looking
+  // for slave_agent nodes in the same workflow that have an edge to this master.
+  const slaveNodes = allNodes.filter((n) => n.data?.blockType === 'slave_agent');
+  const slaveCapabilities = slaveNodes.map((n) => {
+    const sv = subBlockValues[n.id] ?? {};
+    return {
+      nodeId: n.id,
+      capability: String(sv.capabilityLabel || n.data?.title || n.id),
+    };
+  });
+
+  // ── Step 1: CoT Planning ────────────────────────────────────────────────────
+  const capabilityList = slaveCapabilities.length > 0
+    ? slaveCapabilities.map((sc, i) => `  ${i + 1}. ${sc.capability} (id: ${sc.nodeId})`).join('\n')
+    : '  (no slaves registered — the master will answer directly)';
+
+  const planSystemPrompt =
+    `You are a master orchestrator. Break the question into sub-tasks, one per registered slave capability.\n` +
+    `Available slaves:\n${capabilityList}\n\n` +
+    `Respond ONLY with valid JSON:\n` +
+    `{\n  "steps": [\n    { "id": "step_1", "sub_question": "...", "capability": "<capability_label>", "depends_on": [] },\n    ...\n  ]\n}`;
+
+  const planUserPrompt = contextStr
+    ? `Context:\n${contextStr}\n\nQuestion:\n${question}`
+    : question;
+
+  let cotPlan: MasterCotStep[] = [];
+  let rawPlanJson: unknown = null;
+
+  try {
+    const planAgent = { id: node.id + '_plan', model: rawModel, temperature: 0.3, systemPrompt: planSystemPrompt, userPrompt: planUserPrompt };
+    const planRes = await callAgent({ agent: planAgent, input: question });
+    const planRaw = String((planRes as { output?: unknown })?.output ?? planRes ?? '').trim();
+    const planJsonStr = planRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, '');
+    rawPlanJson = JSON.parse(planJsonStr);
+    cotPlan = (rawPlanJson as { steps: MasterCotStep[] }).steps ?? [];
+  } catch {
+    // Fallback: one step per slave capability
+    cotPlan = slaveCapabilities.map((sc, i) => ({
+      id: `step_${i + 1}`,
+      sub_question: question,
+      capability: sc.capability,
+      depends_on: [],
+    }));
+    rawPlanJson = { steps: cotPlan, fallback: true };
+  }
+
+  // ── Step 2: Topo-sort + parallel dispatch ───────────────────────────────────
+  const capabilityToNodeId = Object.fromEntries(
+    slaveCapabilities.map((sc) => [sc.capability, sc.nodeId])
+  );
+
+  const slaveOutputs: Record<string, unknown> = {};
+  const maxRePlanRounds = Math.max(0, parseInt(String(values.maxRePlanRounds ?? '1'), 10));
+  const adaptiveRePlan = values.adaptiveRePlan !== false;
+
+  let pendingSteps = [...cotPlan];
+  let rePlanRound = 0;
+  let sharedContext = contextStr;
+
+  while (pendingSteps.length > 0) {
+    const layers = topoSortSteps(pendingSteps);
+
+    for (const layer of layers) {
+      const layerResults = await Promise.allSettled(
+        layer.map(async (step) => {
+          const slaveNodeId = capabilityToNodeId[step.capability];
+          const slaveNode = slaveNodeId ? allNodes.find((n) => n.id === slaveNodeId) : null;
+
+          if (!slaveNode) {
+            // No matching slave — answer directly
+            return { stepId: step.id, result: { answer: `No slave found for capability: ${step.capability}`, cited_nodes: [], confidence: 0.3, needs_clarification: false } };
+          }
+
+          const slaveValues = subBlockValues[slaveNode.id] ?? {};
+          const slaveResult = await runSlaveAgentNode({
+            node: slaveNode,
+            values: { ...slaveValues, task: step.sub_question, context: sharedContext },
+            input: step.sub_question,
+          });
+
+          return { stepId: step.id, result: slaveResult };
+        })
+      );
+
+      for (const settled of layerResults) {
+        if (settled.status === 'fulfilled') {
+          const { stepId, result } = settled.value;
+          slaveOutputs[stepId] = result;
+          // Merge slave answer into shared context for subsequent layers
+          sharedContext += `\n\n[${stepId}] ${(result as { answer?: string }).answer ?? ''}`;
+        }
+      }
+    }
+
+    // ── Adaptive re-plan if any slave requested clarification ─────────────────
+    const needsRePlan = adaptiveRePlan &&
+      rePlanRound < maxRePlanRounds &&
+      Object.values(slaveOutputs).some(
+        (r) => (r as { needs_clarification?: boolean }).needs_clarification === true
+      );
+
+    if (!needsRePlan) break;
+    rePlanRound++;
+
+    // Ask master to re-plan with updated context
+    try {
+      const rePlanAgent = { id: node.id + `_replan_${rePlanRound}`, model: rawModel, temperature: 0.3, systemPrompt: planSystemPrompt, userPrompt: `Context so far:\n${sharedContext}\n\nOriginal question:\n${question}` };
+      const rePlanRes = await callAgent({ agent: rePlanAgent, input: question });
+      const rePlanRaw = String((rePlanRes as { output?: unknown })?.output ?? rePlanRes ?? '').trim();
+      const rePlanJson = JSON.parse(rePlanRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+      pendingSteps = (rePlanJson.steps ?? []).filter(
+        (s: MasterCotStep) => !slaveOutputs[s.id]
+      );
+      if (pendingSteps.length > 0) continue;
+    } catch {
+      // Re-plan failed — exit loop
+    }
+    break;
+  }
+
+  // ── Step 3: Synthesis ───────────────────────────────────────────────────────
+  const synthesisOverride = values.synthesisPrompt ? String(values.synthesisPrompt) : '';
+  const synthSystem = synthesisOverride ||
+    `You are a synthesis agent. Given a question and the answers from specialist agents, ` +
+    `produce a concise final answer with source citations. ` +
+    `Respond with JSON: {"final_answer":"...","confidence":0.9}`;
+
+  const evidenceParts = Object.entries(slaveOutputs)
+    .map(([stepId, r]) => `[${stepId}] ${(r as { answer?: string }).answer ?? ''}`)
+    .join('\n\n');
+
+  const synthUserPrompt = `Question:\n${question}\n\nEvidence from specialist agents:\n${evidenceParts}`;
+  const synthAgent = { id: node.id + '_synthesis', model: rawModel, temperature: 0.2, systemPrompt: synthSystem, userPrompt: synthUserPrompt };
+
+  let finalAnswer = evidenceParts || question;
+  let confidence = 0.7;
+
+  try {
+    const synthRes = await callAgent({ agent: synthAgent, input: synthUserPrompt });
+    const synthRaw = String((synthRes as { output?: unknown })?.output ?? synthRes ?? '').trim();
+    const synthJson = JSON.parse(synthRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+    finalAnswer = String(synthJson.final_answer ?? finalAnswer);
+    confidence = Math.min(1, Math.max(0, Number(synthJson.confidence ?? 0.7)));
+  } catch {
+    // Graceful degradation — concatenate slave answers
+    finalAnswer = evidenceParts || question;
+  }
+
+  return {
+    final_answer:  finalAnswer,
+    slave_outputs: slaveOutputs,
+    cot_plan:      rawPlanJson,
+    confidence,
+  };
+}
+
 // --- Node Dispatcher ---------------------------------------------------------
 
 async function runNode(opts: {
@@ -1072,8 +1464,10 @@ async function runNode(opts: {
   input: unknown;
   outputs: Record<string, unknown>;
   inputsByHandle: Record<string, unknown>;
+  allNodes: WorkflowNode[];
+  subBlockValues: Record<string, Record<string, unknown>>;
 }): Promise<unknown> {
-  const { node, values, input, outputs, inputsByHandle } = opts;
+  const { node, values, input, outputs, inputsByHandle, allNodes, subBlockValues } = opts;
   const blockType = node.data?.blockType;
 
   switch (blockType) {
@@ -1192,6 +1586,16 @@ async function runNode(opts: {
 
     case 'router_v2':
       return await runRouterV2Node({ node, values, input });
+
+    case 'chain_of_thought':
+      return await runChainOfThoughtNode({ node, values, input });
+
+    case 'slave_agent':
+      // slave_agent is dispatched by master_agent — if executed standalone, run as a regular agent call.
+      return await runSlaveAgentNode({ node, values, input });
+
+    case 'master_agent':
+      return await runMasterAgentNode({ node, values, input, allNodes, subBlockValues });
 
     case 'loop':
       throw new Error('Loop block: loop execution is not yet implemented in ck8t-server.');
@@ -1533,7 +1937,7 @@ export async function executeGraph(opts: {
             }
           }
 
-          let result = await runNode({ node: n, values, input, outputs, inputsByHandle });
+          let result = await runNode({ node: n, values, input, outputs, inputsByHandle, allNodes, subBlockValues });
 
           let meta: Record<string, unknown> | undefined;
 
