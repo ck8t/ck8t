@@ -15,6 +15,7 @@
  */
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { AgentRequest, AgentResponse, Workflow, TraceEntry, RunResult } from '../types';
+import { runNs9QueryBlock, runNs9RlhfBlock, runNs9IngestBlock } from './ns9-block';
 
 /* ── Dependency injection types ── */
 
@@ -867,6 +868,19 @@ export async function executeGraph({
             }
             case 'audio_input': {
               output = input;
+              break;
+            }
+            // ── NS9 blocks (Sprint 27) ────────────────────────────────── //
+            case 'ns9_query': {
+              output = await runNs9QueryBlock({ values, input, callTool });
+              break;
+            }
+            case 'ns9_rlhf': {
+              output = await runNs9RlhfBlock({ values, input, callTool });
+              break;
+            }
+            case 'ns9_ingest': {
+              output = await runNs9IngestBlock({ values, input, callTool });
               break;
             }
             default: {
