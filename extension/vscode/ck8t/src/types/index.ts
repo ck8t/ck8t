@@ -1,4 +1,4 @@
-/* ── Workflow types — mirrors the canvas structures in convengine-ui ── */
+/* ── Workflow types ── */
 
 export interface WorkflowNode {
   id: string;

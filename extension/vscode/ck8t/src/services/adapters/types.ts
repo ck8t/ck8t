@@ -3,7 +3,7 @@
 export interface CustomProviderConfig {
   key: string;
   name: string;
-  type: 'openai' | 'anthropic' | 'lmstudio' | 'ollama';
+  type: 'openai' | 'anthropic' | 'lmstudio' | 'ollama' | 'deepseek' | 'grok' | 'mistral' | 'gemini' | 'qwen' | string;
   chatUrl: string;
   modelsUrl: string;
   apiKey?: string;

@@ -1,7 +1,8 @@
 /** Filter block — filter items from an array based on conditions. */
 import { ConditionalIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const FilterBlock = {
+export const FilterBlock = defineCk8tBlock({
   type: 'filter',
   name: 'Filter',
   description: 'Filter items based on conditions',
@@ -41,4 +42,4 @@ export const FilterBlock = {
     rejected: { type: 'json', description: 'Items that did not match' },
     count: { type: 'number', description: 'Number of kept items' },
   },
-}
+})

@@ -1,7 +1,8 @@
 /** Wait block — mirrors sim's wait shape. */
 import { WaitIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const WaitBlock = {
+export const WaitBlock = defineCk8tBlock({
   type: 'wait',
   name: 'Wait',
   description: 'Pause execution for a duration',
@@ -31,4 +32,4 @@ export const WaitBlock = {
   outputs: {
     waitedMs: { type: 'number', description: 'Actual milliseconds waited' },
   },
-}
+})

@@ -1,6 +1,8 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { callAgent } from '../services/llm.js';
 import { callTool } from '../services/mcp.js';
+import { runNs9QueryBlock, runNs9RlhfBlock, runNs9IngestBlock } from './ns9-block.js';
+import { customServerBlockRunners, customServerBlockMeta, emitServerBlockProgress } from '../services/block-manager.js';
 
 // --- Types -------------------------------------------------------------------
 
@@ -59,11 +61,11 @@ function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
 
 // ─── Runtime type validation helpers ─────────────────────────────────────────
 const _compat: Record<string, Set<string>> = {
-  string:  new Set(['string', 'any']),
-  number:  new Set(['number', 'any']),
-  boolean: new Set(['boolean', 'any']),
+  string:  new Set(['string', 'json', 'any']),
+  number:  new Set(['number', 'json', 'any']),
+  boolean: new Set(['boolean', 'json', 'any']),
   json:    new Set(['json', 'array', 'any']),
-  array:   new Set(['array', 'any']),
+  array:   new Set(['array', 'json', 'any']),
   any:     new Set(['string', 'number', 'boolean', 'json', 'array', 'any']),
 };
 
@@ -159,6 +161,19 @@ const CARD_PORT_DEFAULTS: Record<string, { inputs: PortDef[]; outputs: PortDef[]
   slave_agent: {
     inputs:  [{ key: 'task', type: 'string' }, { key: 'context', type: 'json' }],
     outputs: [{ key: 'answer', type: 'string' }, { key: 'cited_nodes', type: 'array' }, { key: 'confidence', type: 'number' }, { key: 'needs_clarification', type: 'boolean' }],
+  },
+  // NS9 knowledge-graph blocks (Sprint 27)
+  ns9_query: {
+    inputs:  [{ key: 'input', type: 'any' }],
+    outputs: [{ key: 'context_text', type: 'string' }, { key: 'value', type: 'string' }, { key: 'confidence', type: 'number' }],
+  },
+  ns9_rlhf: {
+    inputs:  [{ key: 'input', type: 'any' }],
+    outputs: [{ key: 'saved', type: 'boolean' }],
+  },
+  ns9_ingest: {
+    inputs:  [{ key: 'input', type: 'any' }],
+    outputs: [{ key: 'triggered', type: 'boolean' }],
   },
 };
 
@@ -581,6 +596,16 @@ function runMapperNode(opts: {
   }
 }
 
+const API_IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Full HTTP client block — url/method/headers/params/body/timeout/retries,
+ * same templating as the Agent block ({{input}} plus any flattened key from
+ * the upstream JSON output), and binary-aware responses so an image API
+ * (e.g. Ideogram) can feed straight into a preview node as a data URI.
+ * Auth is just a header (Authorization / Api-Key / etc.) — exactly like
+ * fetch/axios, no separate "auth" abstraction.
+ */
 async function runApiNode(opts: {
   values: Record<string, unknown>;
   input: unknown;
@@ -589,7 +614,12 @@ async function runApiNode(opts: {
   const { values, input, inputsByHandle } = opts;
   const method = String(values.method || 'GET').toUpperCase();
   const inputStr = input !== undefined ? (typeof input === 'string' ? input : JSON.stringify(input ?? '')) : '';
-  const substitute = (s: string) => (inputStr ? s.replace(/\{\{\s*input\s*\}\}/g, inputStr) : s);
+  const bag: Record<string, unknown> = { input: inputStr };
+  try {
+    const parsed = JSON.parse(inputStr);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(bag, parsed as Record<string, unknown>);
+  } catch { /* not JSON — {{input}} is still available */ }
+  const substitute = (s: string) => interpolateBag(s, bag);
 
   let url = substitute(String(values.url || ''));
   if (inputsByHandle?.url != null) url = String(inputsByHandle.url);
@@ -604,7 +634,7 @@ async function runApiNode(opts: {
   if (params.length > 0) {
     const qs = params
       .filter((p) => p.Key)
-      .map((p) => encodeURIComponent(p.Key!) + '=' + encodeURIComponent(String(p.Value ?? '')))
+      .map((p) => encodeURIComponent(p.Key!) + '=' + encodeURIComponent(substitute(String(p.Value ?? ''))))
       .join('&');
     url += (url.includes('?') ? '&' : '?') + qs;
   }
@@ -618,10 +648,10 @@ async function runApiNode(opts: {
   }
   const headers: Record<string, string> = {};
   for (const h of headerEntries) {
-    if (h.Key) headers[h.Key] = String(h.Value ?? '');
+    if (h.Key) headers[h.Key] = substitute(String(h.Value ?? ''));
   }
 
-  // Build body: wired `body` port > wired `input` port > static field with {{input}} substitution
+  // Build body: wired `body` port > wired `input` port > static field with templating
   let body: string | undefined;
   if (method !== 'GET' && method !== 'HEAD') {
     if (inputsByHandle?.body != null) {
@@ -641,21 +671,59 @@ async function runApiNode(opts: {
     }
   }
 
-  try {
-    const resp = await fetch(url, { method, headers, body });
-    const contentType = resp.headers.get('content-type') || '';
-    let data: unknown;
-    if (contentType.includes('application/json')) {
-      data = await resp.json();
-    } else {
-      data = await resp.text();
+  const timeoutMs = Number(values.timeout) > 0 ? Number(values.timeout) : 300_000;
+  const maxRetries = Math.max(0, Number(values.retries) || 0);
+  const retryDelayMs = Number(values.retryDelayMs) > 0 ? Number(values.retryDelayMs) : 500;
+  const retryMaxDelayMs = Number(values.retryMaxDelayMs) > 0 ? Number(values.retryMaxDelayMs) : 30_000;
+  const canRetry = API_IDEMPOTENT_METHODS.has(method) || values.retryNonIdempotent === true;
+
+  const attemptFetch = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { method, headers, body, signal: controller.signal });
+      const contentType = resp.headers.get('content-type') || '';
+      let data: unknown;
+      if (contentType.includes('application/json')) {
+        try { data = await resp.json(); } catch { data = await resp.text(); }
+      } else if (/^image\//.test(contentType) || contentType === 'application/octet-stream' || contentType === 'application/pdf') {
+        const buf = await resp.arrayBuffer();
+        data = `data:${contentType};base64,${Buffer.from(buf).toString('base64')}`;
+      } else {
+        data = await resp.text();
+      }
+      const respHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { respHeaders[k] = v; });
+      return { data, status: resp.status, headers: respHeaders, ok: resp.ok };
+    } finally {
+      clearTimeout(timer);
     }
-    const respHeaders: Record<string, string> = {};
-    resp.headers.forEach((v, k) => { respHeaders[k] = v; });
-    return { data, status: resp.status, headers: respHeaders };
-  } catch (err) {
-    return { data: null, status: 0, headers: {}, error: (err as Error).message };
+  };
+
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await attemptFetch();
+      if (!result.ok && result.status >= 500 && attempt < maxRetries && canRetry) {
+        lastErr = new Error(`HTTP ${result.status}`);
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      const { ok: _ok, ...rest } = result;
+      return rest;
+    } catch (err: unknown) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries && canRetry) {
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      break;
+    }
   }
+  const message = lastErr?.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : (lastErr?.message || 'Request failed');
+  return { data: null, status: 0, headers: {}, error: message };
 }
 
 async function runDelayNode(opts: {
@@ -1610,8 +1678,30 @@ async function runNode(opts: {
     // Pass the input through so the trace still records this node.
     case 'skill':
       return input;
-    default:
+
+    // ── NS9 blocks (Sprint 27) ─────────────────────────────────────────
+    case 'ns9_query':
+      return await runNs9QueryBlock({ values, input });
+    case 'ns9_rlhf':
+      return await runNs9RlhfBlock({ values, input });
+    case 'ns9_ingest':
+      return await runNs9IngestBlock({ values });
+    default: {
+      // Community blocks installed at ~/.salilvnair/ck8t/blocks/ via Block Manager.
+      const customRun = customServerBlockRunners.get(blockType as string);
+      if (customRun) {
+        const blkHasProgress = customServerBlockMeta.get(blockType as string)?.hasProgress ?? false;
+        const progressFn = blkHasProgress
+          ? (data: Record<string, unknown>) => emitServerBlockProgress(node.id, data)
+          : undefined;
+        try {
+          return await customRun({ values, input, inputsByHandle, outputs, node, allNodes, subBlockValues, callTool, callAgent, progress: progressFn });
+        } finally {
+          if (progressFn) emitServerBlockProgress(node.id, null);
+        }
+      }
       return input;
+    }
   }
 }
 function runResponseNode(opts: {

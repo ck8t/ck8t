@@ -1,25 +1,20 @@
 /**
- * LLM service — calls the LLM for agent nodes.
+ * LLM service — calls providers directly, no external dependency.
  *
- * Strategy (proxy-first):
- *  1. DEFAULT: proxy through ConvEngine's /builder-studio/agent endpoint.
- *     This lets the organisation use its own LLM gateway / custom models
- *     configured in ConvEngine (convengine-demo).
- *  2. FALLBACK: if DIRECT_LLM=true AND the matching API key is set,
- *     call OpenAI / Anthropic directly (useful for local dev without ConvEngine).
+ * Priority order:
+ *  1. User-registered custom provider (LM Studio, Ollama, any OpenAI-compatible endpoint)
+ *  2. Direct Anthropic (ANTHROPIC_API_KEY)
+ *  3. Direct OpenAI (OPENAI_API_KEY)
  */
 import { config } from '../config.js'
 import { listCustomProviders } from './customProvider.js'
 import type { AgentRequest, AgentResponse } from '../types/index.js'
 
-const useDirectLlm = process.env.DIRECT_LLM === 'true'
-
 export async function callAgent(req: AgentRequest): Promise<AgentResponse> {
   const model = req.agent.model || ''
   const providerKey = req.agent.provider || ''
 
-  // ── 1. Custom provider (LM Studio, Ollama, any user-registered provider) ─
-  // Check by provider key first, then fall back to model-id match.
+  // ── 1. Custom provider ────────────────────────────────────────────────────
   const customProviders = listCustomProviders()
   const customProvider =
     customProviders.find((p) => p.key === providerKey) ||
@@ -27,25 +22,21 @@ export async function callAgent(req: AgentRequest): Promise<AgentResponse> {
       p.activeModel === model ||
       (p.cachedModels ?? []).some((m) => m.id === model)
     )
-  if (customProvider?.chatUrl) {
-    return callCustomProvider(req, customProvider)
-  }
+  if (customProvider?.chatUrl) return callCustomProvider(req, customProvider)
 
-  // ── 2. Direct mode (opt-in via DIRECT_LLM=true + env API keys) ───────────
-  if (useDirectLlm) {
-    if (config.openaiKey && (model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3'))) {
-      return callOpenAI(req, model)
-    }
-    if (config.anthropicKey && model.startsWith('claude-')) {
-      return callAnthropic(req, model)
-    }
-  }
+  // ── 2. Direct Anthropic ───────────────────────────────────────────────────
+  if (config.anthropicKey && model.startsWith('claude-')) return callAnthropic(req, model)
 
-  // ── 3. Proxy through ConvEngine (default — requires convengine-demo running) ─
-  return proxyToConvEngine(req)
+  // ── 3. Direct OpenAI ─────────────────────────────────────────────────────
+  if (config.openaiKey) return callOpenAI(req, model)
+
+  throw new Error(
+    'No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY, ' +
+    'or register a custom provider in Settings → LLM Provider Configuration.'
+  )
 }
 
-/* ── Custom provider (server-side — no CORS) ──────────────────────────────── */
+/* ── Custom provider (OpenAI-compatible or Anthropic) ─────────────────────── */
 
 async function callCustomProvider(
   req: AgentRequest,
@@ -55,11 +46,6 @@ async function callCustomProvider(
   const model = req.agent.model || ''
   const chatUrl = p.chatUrl!
 
-  const messages: Array<{ role: string; content: string }> = []
-  if (req.agent.systemPrompt) messages.push({ role: 'system', content: req.agent.systemPrompt })
-  messages.push({ role: 'user', content: req.agent.userPrompt || req.input })
-
-  // Anthropic format
   if (p.type === 'anthropic') {
     const body: Record<string, unknown> = {
       model,
@@ -80,12 +66,13 @@ async function callCustomProvider(
     return { output: data.content?.map((c) => c.text).join('') ?? '', model, ms: Date.now() - t0 }
   }
 
-  // OpenAI-compatible (default — covers OpenAI, LM Studio, Ollama /v1, Groq, etc.)
+  // OpenAI-compatible
+  const messages: Array<{ role: string; content: string }> = []
+  if (req.agent.systemPrompt) messages.push({ role: 'system', content: req.agent.systemPrompt })
+  messages.push({ role: 'user', content: req.agent.userPrompt || req.input })
+
   const body: Record<string, unknown> = { model, messages }
   if (req.agent.temperature != null) body.temperature = req.agent.temperature
-
-  // Only send response_format for strict json_schema — many local providers
-  // (LM Studio, Ollama) reject the non-standard `json_object` type.
   if (req.agent.responseFormat && req.agent.strictOutput) {
     try {
       const schema = typeof req.agent.responseFormat === 'string'
@@ -93,7 +80,6 @@ async function callCustomProvider(
       body.response_format = { type: 'json_schema', json_schema: { name: 'response', strict: true, schema } }
     } catch { /* ignore bad schema */ }
   }
-  // `json_object` intentionally omitted for custom providers — not universally supported
 
   const hdrs: Record<string, string> = { 'Content-Type': 'application/json', ...p.headers }
   if (p.apiKey) hdrs['Authorization'] = `Bearer ${p.apiKey}`
@@ -104,7 +90,7 @@ async function callCustomProvider(
   return { output: data.choices?.[0]?.message?.content ?? '', model, ms: Date.now() - t0 }
 }
 
-/* ── Direct OpenAI ────────────────────────────────────────────────────── */
+/* ── Direct OpenAI ──────────────────────────────────────────────────────── */
 
 async function callOpenAI(req: AgentRequest, model: string): Promise<AgentResponse> {
   const t0 = Date.now()
@@ -112,16 +98,14 @@ async function callOpenAI(req: AgentRequest, model: string): Promise<AgentRespon
   if (req.agent.systemPrompt) messages.push({ role: 'system', content: req.agent.systemPrompt })
   messages.push({ role: 'user', content: req.agent.userPrompt || req.input })
 
-  const body: Record<string, unknown> = { model, messages }
+  const body: Record<string, unknown> = { model: model || 'gpt-4o', messages }
   if (req.agent.temperature != null) body.temperature = req.agent.temperature
-
   if (req.agent.responseFormat && req.agent.strictOutput) {
     try {
       const schema = typeof req.agent.responseFormat === 'string'
-        ? JSON.parse(req.agent.responseFormat)
-        : req.agent.responseFormat
+        ? JSON.parse(req.agent.responseFormat) : req.agent.responseFormat
       body.response_format = { type: 'json_schema', json_schema: { name: 'response', strict: true, schema } }
-    } catch { /* ignore parse errors, send without format */ }
+    } catch { /* ignore */ }
   } else if (req.agent.responseFormat) {
     body.response_format = { type: 'json_object' }
   }
@@ -131,13 +115,9 @@ async function callOpenAI(req: AgentRequest, model: string): Promise<AgentRespon
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.openaiKey}` },
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`OpenAI ${res.status}: ${text}`)
-  }
+  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
   const data = await res.json() as { choices: Array<{ message: { content: string } }> }
-  const output = data.choices?.[0]?.message?.content ?? ''
-  return { output, model, ms: Date.now() - t0 }
+  return { output: data.choices?.[0]?.message?.content ?? '', model, ms: Date.now() - t0 }
 }
 
 /* ── Direct Anthropic ───────────────────────────────────────────────────── */
@@ -161,36 +141,7 @@ async function callAnthropic(req: AgentRequest, model: string): Promise<AgentRes
     },
     body: JSON.stringify(body),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Anthropic ${res.status}: ${text}`)
-  }
+  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`)
   const data = await res.json() as { content: Array<{ text: string }> }
-  const output = data.content?.map((c) => c.text).join('') ?? ''
-  return { output, model, ms: Date.now() - t0 }
-}
-
-/* ── Proxy to ConvEngine ──────────────────────────────────────────────────── */
-
-async function proxyToConvEngine(req: AgentRequest): Promise<AgentResponse> {
-  const url = `${config.convengineBase}/builder-studio/agent`
-  let res: Response
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-      signal: AbortSignal.timeout(30_000),
-    })
-  } catch {
-    throw new Error(
-      'No LLM provider could handle this request. ' +
-      'Add a custom provider in Settings → LLM Provider Configuration, or ensure convengine-demo is running.'
-    )
-  }
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`ConvEngine agent proxy ${res.status}: ${text}`)
-  }
-  return await res.json() as AgentResponse
+  return { output: data.content?.map((c) => c.text).join('') ?? '', model, ms: Date.now() - t0 }
 }

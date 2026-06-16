@@ -474,6 +474,12 @@ export const useWorkspaceStore = create()(
       {
         name: 'ck8t/workspace',
         version: 8,
+        // In VS Code extension mode, skip localStorage rehydration entirely.
+        // The SQLite snapshot (sent as 'workspaceSnapshot' from the extension host)
+        // is the authoritative source of truth. If localStorage rehydrates AFTER
+        // hydrateSnapshot has already restored the correct state, it overwrites
+        // imported workflows. skipHydration avoids that race entirely.
+        skipHydration: typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension',
         migrate: (persisted, fromVersion) => {
           // Any older-version blob is discarded in favor of the bundled seed.
           // Bump whenever the demo topology changes (new node/edge) so users

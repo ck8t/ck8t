@@ -42,7 +42,7 @@ export function providerRouter() {
   });
 
   /* POST /api/v1/ck8t/llm/provider — switch active provider/model */
-  router.post('/ck8t/llm/provider', (req: Request, res: Response) => {
+  router.post('/ck8t/llm/provider', async (req: Request, res: Response) => {
     try {
       const { family, model, provider } = req.body as {
         family?: string;
@@ -59,7 +59,7 @@ export function providerRouter() {
         const cfg = allProviders.find((p) => p.key === provider);
         if (cfg) {
           const modelId = family ?? model ?? cfg.activeModel ?? '';
-          saveCustomProvider({ ...cfg, activeModel: modelId });
+          await saveCustomProvider({ ...cfg, activeModel: modelId });
         }
         res.json({ ok: true, active: provider });
       } else {
@@ -128,7 +128,7 @@ export function providerRouter() {
         activeModel: body.activeModel || '',
       };
 
-      const saved = saveCustomProvider(cfg);
+      const saved = await saveCustomProvider(cfg);
 
       // Eagerly fetch and cache models
       let fetchedModels: { id: string; label: string; group: string; family: string }[] = [];
@@ -151,10 +151,10 @@ export function providerRouter() {
   });
 
   /* DELETE /api/v1/ck8t/llm/custom-providers/:key */
-  router.delete('/ck8t/llm/custom-providers/:key', (req: Request, res: Response) => {
+  router.delete('/ck8t/llm/custom-providers/:key', async (req: Request, res: Response) => {
     try {
       const { key } = req.params;
-      deleteCustomProvider(key);
+      await deleteCustomProvider(key);
       // If deleted provider was active, revert to copilot
       if (getActiveProviderKey() === key) {
         setActiveCustomProvider(null);

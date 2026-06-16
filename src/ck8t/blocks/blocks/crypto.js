@@ -1,7 +1,8 @@
 /** Crypto block — hash, encrypt, encode data. */
 import { CodeIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const CryptoBlock = {
+export const CryptoBlock = defineCk8tBlock({
   type: 'crypto',
   name: 'Crypto',
   description: 'Hash, encrypt, and encode data',
@@ -40,4 +41,4 @@ export const CryptoBlock = {
   outputs: {
     result: { type: 'string', description: 'Operation result' },
   },
-}
+})

@@ -4,14 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:website": "node scripts/build-website.js",
-    "build:extension": "VITE_CONVENGINE_BASE=BRIDGE_BASE_PLACEHOLDER vite build --config vite.extension.config.js",
-    "build:all": "npm run build && npm run build:extension && npm run build:website",
-    "watch:extension": "VITE_CONVENGINE_BASE=BRIDGE_BASE_PLACEHOLDER vite build --watch --config vite.extension.config.js",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "ui": "vite",
+    "server": "cd ck8t-server && npm run dev",
+    "vscode": "vite build --config vite.extension.config.js && cd extension/vscode/ck8t && npm run compile"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

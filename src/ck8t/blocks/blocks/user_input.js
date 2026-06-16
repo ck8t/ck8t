@@ -8,8 +8,9 @@
  * the kind of input we want (short text / long text / url / number).
  */
 import { VariableIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const UserInputBlock = {
+export const UserInputBlock = defineCk8tBlock({
   type: 'user_input',
   name: 'User Input',
   description: 'Prompt user at runtime',
@@ -183,4 +184,4 @@ export const UserInputBlock = {
   outputs: {
     value: { type: 'any', description: 'Runtime value produced by this input kind.' },
   },
-}
+})

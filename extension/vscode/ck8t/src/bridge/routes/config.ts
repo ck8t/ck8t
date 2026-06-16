@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import * as path from 'path';
+import { getAuditMaxEntries, setAuditMaxEntries } from '../audit';
+import { getDbPath } from '../../storage/db';
 
 let _storagePath = '';
 
@@ -12,12 +13,21 @@ export function configRouter() {
 
   /** GET /api/v1/ck8t/app-config */
   router.get('/ck8t/app-config', (_req, res) => {
-    const dbPath = path.join(_storagePath, 'ck8t.db');
     res.json({
       mode: 'vscode-extension',
       storagePath: _storagePath,
-      dbPath,
+      dbPath: getDbPath(),
+      auditMaxEntries: getAuditMaxEntries(),
     });
+  });
+
+  /** PATCH /api/v1/ck8t/app-config */
+  router.patch('/ck8t/app-config', (req, res) => {
+    const { auditMaxEntries } = req.body as { auditMaxEntries?: number };
+    if (auditMaxEntries !== undefined) {
+      setAuditMaxEntries(auditMaxEntries);
+    }
+    res.json({ ok: true, auditMaxEntries: getAuditMaxEntries() });
   });
 
   return router;

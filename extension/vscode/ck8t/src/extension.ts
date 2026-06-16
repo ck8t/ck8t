@@ -13,14 +13,18 @@ import { startBridgeServer, stopBridgeServer } from './bridge/server';
 import { Ck8tPanel } from './panel/Ck8tPanel';
 import { WikiViewProvider } from './panel/WikiViewProvider';
 import { registerChatParticipant } from './chat/participant';
-import { initDb } from './storage/db';
+import { initDb, closeDb } from './storage/db';
+import { initSecretStore, migrateLegacyApiKeys } from './services/secret-store';
 import { initWorkspaceService } from './services/workspace';
 import { initMcpService, disposeMcpService } from './services/mcp';
 import { initScheduler, disposeAll as disposeScheduler } from './engine/scheduler';
 import { callAgentViaCopilot } from './services/llm';
 import { loadActiveFamilyFromDb } from './bridge/routes/provider';
+import { resyncAllCustomProviders } from './bridge/routes/ai-providers';
 import { initConfigService } from './bridge/routes/config';
 import { callTool } from './services/mcp';
+import { initBlockLoader } from './services/block-loader';
+import { initAuditPersistence } from './bridge/audit';
 
 let _bridgePort: number | undefined;
 
@@ -28,11 +32,16 @@ export async function activate(context: vscode.ExtensionContext) {
   const storagePath = context.globalStorageUri.fsPath;
 
   /* ── 1. Init file-based store ── */
-  initDb(storagePath);
+  await initDb(storagePath, context.extensionUri.fsPath);
+  initSecretStore(context.secrets); // API keys live in the OS keychain, never in SQLite
+  await migrateLegacyApiKeys();     // one-time sweep: scrub any plaintext keys left by earlier builds
+  await resyncAllCustomProviders(); // backfill cachedModels for providers configured before this existed
   loadActiveFamilyFromDb();   // restore persisted default model selection
   initWorkspaceService(storagePath);
   initMcpService(storagePath);
   initConfigService(storagePath);
+  initAuditPersistence(200);  // load persisted audit entries from SQLite
+  initBlockLoader(); // load community blocks from ~/.salilvnair/ck8t/blocks/
 
   /* ── 2. Init scheduler (restores cron/webhook deployments from DB) ── */
   initScheduler(
@@ -106,5 +115,6 @@ export function deactivate() {
   disposeMcpService(); // kill any running stdio subprocesses
   disposeScheduler();  // stop all in-process cron timers
   stopBridgeServer();
+  closeDb();           // flush sql.js in-memory DB to disk before process exits
   console.log('[ck8t] Extension deactivated.');
 }

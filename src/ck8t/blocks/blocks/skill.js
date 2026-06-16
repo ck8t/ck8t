@@ -7,8 +7,9 @@
  * skill's return value becomes the node output.
  */
 import { SkillsIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SkillBlock = {
+export const SkillBlock = defineCk8tBlock({
   type: 'skill',
   name: 'Skill',
   description: 'Execute a workspace skill directly',
@@ -39,4 +40,4 @@ export const SkillBlock = {
   outputs: {
     result: { type: 'any', description: 'Return value from the skill execution' },
   },
-}
+})

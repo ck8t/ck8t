@@ -11,12 +11,12 @@ import CodeEditor from '../components/CodeEditor'
 import JsonEditor from '../components/JsonEditor'
 import FullscreenWrapper from '../components/FullscreenWrapper'
 import StyledSelect from '../components/StyledSelect'
-import { changeRuntimeProvider } from '../api/llm-provider-client'
 import { useMcpStore } from '../mcp/mcp-store'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { getConfiguredProviderForModel, useLlmConfigStore } from '../stores/llm-config-store'
+import { useLlmConfigStore } from '../stores/llm-config-store'
 import JsonView from '../run/JsonView'
+import { extractMediaUri } from '../run/graph-runner'
 
 // Password field with show/hide toggle used when sub.password === true
 function PasswordInputField({ value, onChange, placeholder, readOnly }) {
@@ -68,7 +68,7 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
   // Subscribe to llm store so model comboboxes re-render when active provider changes
   useLlmConfigStore((s) => s.activeProvider)
 
-  const options = typeof sub.options === 'function' ? safeCall(sub.options) : sub.options
+  const options = typeof sub.options === 'function' ? safeCall(sub.options, blockValues) : sub.options
 
   switch (sub.type) {
     case 'short-input':
@@ -104,6 +104,9 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
 
     case 'mcp-server-selector':
       return <McpServerSelector value={defaultValue} onChange={set} placeholder={sub.placeholder} />
+
+    case 'llm-model-selector':
+      return <LlmModelSelector value={defaultValue} onChange={set} placeholder={sub.placeholder} />
 
     case 'mcp-tool-selector':
       return (
@@ -193,20 +196,17 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
 
     case 'dropdown':
     case 'combobox':
+      // Model/provider selection here is scoped to this node only — it must
+      // never mutate the global runtime provider (that broke other Agent
+      // nodes and silently fell back to Copilot whenever the picked model
+      // wasn't in the global model list). Resolution happens per-node at
+      // execution time in graph-runner.js.
       return (
         <StyledSelect
           value={defaultValue ?? ''}
           options={options || []}
           placeholder={sub.placeholder}
-          onChange={(nextValue) => {
-            set(nextValue)
-            if (sub.id === 'model' && nextValue) {
-              void changeRuntimeProvider({
-                provider: getConfiguredProviderForModel(nextValue) || undefined,
-                model: nextValue,
-              }).then((config) => useLlmConfigStore.getState().setConfig(config)).catch(() => {})
-            }
-          }}
+          onChange={set}
         />
       )
 
@@ -355,25 +355,45 @@ function JsonPreviewInspector({ nodeId }) {
       </div>
     )
   }
-  // Plain strings: render as preformatted text with the json-string colour so
-  // it doesn't accidentally get wrapped in a JsonView object explorer.
-  if (typeof lastOutput === 'string') {
+  return <SmartPreview value={lastOutput} />
+}
+
+/** Renders block output intelligently: images, PDFs, or JSON/text. */
+function SmartPreview({ value }) {
+  const media = extractMediaUri(value)
+  if (media) {
+    if (media.mimeType === 'application/pdf') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <embed src={media.dataUri} type="application/pdf" style={{ width: '100%', minHeight: 480, borderRadius: 6, border: '1px solid var(--ce-border)' }} />
+          <a href={media.dataUri} download="output.pdf" style={{ fontSize: 11, color: '#60a5fa', textDecoration: 'none' }}>⬇ Download PDF</a>
+        </div>
+      )
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <img src={media.dataUri} alt="block output" style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--ce-border)', display: 'block' }} />
+        <a href={media.dataUri} download={`output.${media.mimeType.split('/')[1] || 'png'}`} style={{ fontSize: 11, color: '#60a5fa', textDecoration: 'none' }}>⬇ Download image</a>
+      </div>
+    )
+  }
+  if (typeof value === 'string') {
     return (
       <div className="bs-json-wrap bs-json-wrap-wordwrap" style={{ flex: '1 1 auto' }}>
-        <pre className="bs-preview-plain-text">{lastOutput}</pre>
+        <pre className="bs-preview-plain-text">{value}</pre>
       </div>
     )
   }
   return (
     <div className="bs-json-wrap bs-json-wrap-wordwrap" style={{ flex: '1 1 auto' }}>
-      <JsonView value={lastOutput} />
+      <JsonView value={value} />
     </div>
   )
 }
 
-function safeCall(fn) {
+function safeCall(fn, ...args) {
   try {
-    return fn()
+    return fn(...args)
   } catch {
     return []
   }
@@ -573,6 +593,31 @@ function McpServerSelector({ value, onChange, placeholder }) {
     <StyledSelect
       value={value ?? ''}
       placeholder={loading ? 'Loading…' : (placeholder || 'Select an MCP server')}
+      options={options}
+      onChange={onChange}
+    />
+  )
+}
+
+function LlmModelSelector({ value, onChange, placeholder }) {
+  const models = useLlmConfigStore((s) => s.models)
+  const activeProvider = useLlmConfigStore((s) => s.activeProvider)
+  const defaultModel = useLlmConfigStore((s) => s.defaultModel)
+
+  const modelOptions = models.map((m) => ({
+    id: m.id,
+    label: `${m.label || m.id}${m.provider ? ` (${m.provider})` : ''}`,
+  }))
+  const options = value
+    ? [{ id: '', label: '— Use default —' }, ...modelOptions]
+    : modelOptions
+
+  const effectivePlaceholder = placeholder || (defaultModel ? `Default: ${defaultModel}` : 'Select a model')
+
+  return (
+    <StyledSelect
+      value={value ?? ''}
+      placeholder={models.length === 0 ? 'No models configured' : effectivePlaceholder}
       options={options}
       onChange={onChange}
     />

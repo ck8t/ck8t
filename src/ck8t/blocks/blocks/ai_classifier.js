@@ -1,8 +1,9 @@
 /** AI Classifier block — classify text using an LLM. */
 import { AgentIcon } from '../../components/icons'
 import { getModelOptions, getDefaultModel } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const AiClassifierBlock = {
+export const AiClassifierBlock = defineCk8tBlock({
   type: 'ai_classifier',
   name: 'AI Classifier',
   description: 'Classify text into categories using an LLM',
@@ -56,4 +57,4 @@ export const AiClassifierBlock = {
     confidence: { type: 'number', description: 'Confidence score (0-1)' },
     allScores: { type: 'json', description: 'Scores for all categories' },
   },
-}
+})

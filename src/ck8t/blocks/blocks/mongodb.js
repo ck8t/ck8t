@@ -1,7 +1,8 @@
 /** MongoDB block — CRUD operations on MongoDB collections. */
 import { PostgresIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const MongoDbBlock = {
+export const MongoDbBlock = defineCk8tBlock({
   type: 'mongodb',
   name: 'MongoDB',
   description: 'Read and write MongoDB documents',
@@ -67,4 +68,4 @@ export const MongoDbBlock = {
     count: { type: 'number', description: 'Matched/modified document count' },
     insertedId: { type: 'string', description: 'Inserted document ID (for inserts)' },
   },
-}
+})

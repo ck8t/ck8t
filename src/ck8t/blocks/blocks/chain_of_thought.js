@@ -14,8 +14,9 @@
  */
 import { AgentIcon } from '../../components/icons'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ChainOfThoughtBlock = {
+export const ChainOfThoughtBlock = defineCk8tBlock({
   type: 'chain_of_thought',
   name: 'Chain of Thought',
   description: 'Reason step-by-step before answering',
@@ -84,4 +85,4 @@ export const ChainOfThoughtBlock = {
     confidence:      { type: 'number', description: 'Self-assessed confidence 0–1' },
     full_response:   { type: 'json',   description: 'Raw LLM JSON for debugging' },
   },
-}
+})

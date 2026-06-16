@@ -27,6 +27,7 @@ import ImportWorkflowModal from '../components/ImportWorkflowModal'
 import { parseImportedWorkflowJSON } from '../utils/import-workflow'
 import { EDGE as EDGE_CONFIG } from './canvas-visual.config'
 import { MasterSlaveGroupOverlay, useMasterSlaveDropTarget } from './MasterSlaveGroupOverlay'
+import { logUiEvent } from '../audit/ui-audit-store'
 
 const nodeTypes = { builderBlock: WorkflowNode }
 const edgeTypes = { gradient: GradientEdge }
@@ -121,13 +122,29 @@ function CanvasInner() {
   const { screenToFlowPosition, fitView, zoomTo, setNodes: rfSetNodes } = useReactFlow()
   const viewport = useViewport()   // { x, y, zoom } — used by MasterSlaveGroupOverlay
 
-  // ── Master/slave drop registration hook ──────────────────────────────────
-  const { tryMasterSlaveRegister } = useMasterSlaveDropTarget({ nodes, getBlock })
   const nodes = useWorkflowStore((s) => s.nodes)
   const edges = useWorkflowStore((s) => s.edges)
+  // ── Master/slave drop registration hook ──────────────────────────────────
+  const { tryMasterSlaveRegister } = useMasterSlaveDropTarget({ nodes, getBlock })
   const onNodesChange = useWorkflowStore((s) => s.onNodesChange)
   const onEdgesChange = useWorkflowStore((s) => s.onEdgesChange)
-  const onConnect = useWorkflowStore((s) => s.onConnect)
+  const _onConnect = useWorkflowStore((s) => s.onConnect)
+  const onConnect = useCallback((params) => {
+    _onConnect(params)
+    const srcNode = nodes.find((n) => n.id === params.source)
+    const tgtNode = nodes.find((n) => n.id === params.target)
+    logUiEvent('canvas.edge.connect', {
+      source:         params.source,
+      sourceHandle:   params.sourceHandle ?? null,
+      sourceType:     srcNode?.type ?? null,
+      sourceLabel:    srcNode?.data?.name ?? null,
+      target:         params.target,
+      targetHandle:   params.targetHandle ?? null,
+      targetType:     tgtNode?.type ?? null,
+      targetLabel:    tgtNode?.data?.name ?? null,
+      edge:           params,
+    })
+  }, [_onConnect, nodes])
   const addNode = useWorkflowStore((s) => s.addNode)
   const selectNode = useWorkflowStore((s) => s.selectNode)
   const removeNode = useWorkflowStore((s) => s.removeNode)
@@ -296,7 +313,15 @@ function CanvasInner() {
         const cfg = getBlock(b.type)
         if (!cfg) return
         const position = screenToFlowPosition({ x: clientX, y: clientY })
-        addNode(b.type, position, cfg)
+        const newNode = addNode(b.type, position, cfg)
+        logUiEvent('canvas.block.add', {
+          blockType:  b.type,
+          blockName:  b.name,
+          nodeId:     newNode?.id ?? null,
+          position,
+          totalNodes: nodes.length + 1,
+          totalEdges: edges.length,
+        })
       },
     })
 
@@ -585,6 +610,14 @@ function CanvasInner() {
       if (!cfg) return
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
       const newNode = addNode(blockType, position, cfg)
+      logUiEvent('canvas.block.add', {
+        blockType,
+        blockName:  cfg.name ?? blockType,
+        nodeId:     newNode?.id ?? null,
+        position,
+        totalNodes: nodes.length + 1,
+        totalEdges: edges.length,
+      })
       // Auto-register slave_agent blocks that land on a master_agent node
       if (newNode?.id) {
         tryMasterSlaveRegister(e, blockType, position, newNode.id)
@@ -610,6 +643,17 @@ function CanvasInner() {
   const onEdgesDelete = useCallback(
     (toDelete) => {
       toDelete.forEach((e) => removeEdge(e.id))
+      if (toDelete.length > 0) logUiEvent('canvas.edge.disconnect', {
+        count:      toDelete.length,
+        edges:      toDelete.map((e) => ({
+          id:           e.id,
+          source:       e.source,
+          sourceHandle: e.sourceHandle ?? null,
+          target:       e.target,
+          targetHandle: e.targetHandle ?? null,
+        })),
+        totalEdges: edges.length - toDelete.length,
+      })
     },
     [removeEdge]
   )
@@ -689,7 +733,10 @@ function CanvasInner() {
 
       // Delete / Backspace — prompt before removing selected node(s).
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        const multiIds = selectedNodeIds.length > 1 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : [])
+        const rawIds = selectedNodeIds.length > 1 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : [])
+        // Guard: only include IDs that actually exist in the current canvas (stale
+        // selectedNodeIds from a previous workflow/load would otherwise wipe the canvas).
+        const multiIds = rawIds.filter((id) => !!nodesById[id])
         if (!multiIds.length) return
         e.preventDefault()
         if (multiIds.length === 1) {
@@ -810,6 +857,7 @@ function CanvasInner() {
       <ReactFlow
         nodes={nodes}
         edges={displayedEdges}
+        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -821,8 +869,8 @@ function CanvasInner() {
         onEdgeUpdateStart={onEdgeUpdateStart}
         onEdgeUpdate={onEdgeUpdate}
         onEdgeUpdateEnd={onEdgeUpdateEnd}
-        onPaneClick={() => { selectNode(null); setPaneMenu(null); window.dispatchEvent(new Event('bs:close-context-menus')) }}
-        onNodeClick={(_, node) => selectNode(node.id)}
+        onPaneClick={() => { selectNode(null); setSelectedNodeIds([]); setPaneMenu(null); window.dispatchEvent(new Event('bs:close-context-menus')) }}
+        onNodeClick={(_, node) => { selectNode(node.id); setSelectedNodeIds([node.id]) }}
         onSelectionChange={onSelectionChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -866,6 +914,14 @@ function CanvasInner() {
             onConfirm={() => {
               if (pendingDelete.ids.length === 1) removeNode(pendingDelete.ids[0])
               else removeNodes(pendingDelete.ids)
+              logUiEvent('canvas.block.delete', {
+                count:       pendingDelete.ids.length,
+                nodeIds:     pendingDelete.ids,
+                nodeTitles:  pendingDelete.titles,
+                deletedNodes: pendingDelete.ids.map((id) => nodes.find((n) => n.id === id)).filter(Boolean),
+                totalNodes:  nodes.length - pendingDelete.ids.length,
+                totalEdges:  edges.length,
+              })
               setPendingDelete(null)
             }}
           />

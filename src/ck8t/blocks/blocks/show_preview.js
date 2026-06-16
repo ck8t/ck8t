@@ -9,8 +9,9 @@
  * strings / amber numbers / pink booleans).
  */
 import { ResponseIcon as EyeIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ShowPreviewBlock = {
+export const ShowPreviewBlock = defineCk8tBlock({
   type: 'show_preview',
   name: 'Show Preview',
   description: 'Renders the last received payload inline on the card (no file, no side-effects).',
@@ -40,4 +41,4 @@ export const ShowPreviewBlock = {
   outputs: {
     payload: { type: 'any', description: 'Pass-through of upstream output' },
   },
-}
+})

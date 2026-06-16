@@ -5,8 +5,9 @@
 import { ConnectIcon } from '../../components/icons'
 import { AuthMode } from '../types'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks, PROVIDER_CREDENTIAL_INPUTS } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const RouterBlock = {
+export const RouterBlock = defineCk8tBlock({
   type: 'router_v2',
   name: 'Router',
   description: 'Route workflow based on context',
@@ -67,4 +68,4 @@ export const RouterBlock = {
     reasoning: { type: 'string', description: 'Explanation of why this route was chosen' },
     selectedPath: { type: 'json', description: 'Selected routing path' },
   },
-}
+})

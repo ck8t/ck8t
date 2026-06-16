@@ -15,6 +15,14 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Stable filenames — avoids stale-URL 404s in VS Code webview between rebuilds
+        entryFileNames: 'assets/index.js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]',
+      },
+    },
   },
   define: {
     __APP_NAME__: JSON.stringify(pkg.name),

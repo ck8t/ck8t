@@ -13,8 +13,9 @@
  * `else` handle fires.
  */
 import { ConditionalIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const IfElseIfElseBlock = {
+export const IfElseIfElseBlock = defineCk8tBlock({
   type: 'if_elseif_else',
   name: 'If / Else-If / Else',
   description: 'Chain N conditions; first match wins, else fallback',
@@ -56,4 +57,4 @@ export const IfElseIfElseBlock = {
     const arms = Array.from({ length: n }, (_, i) => `branch_${i + 1}`)
     return [...arms, 'else']
   },
-}
+})

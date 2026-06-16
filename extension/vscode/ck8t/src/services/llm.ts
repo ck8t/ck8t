@@ -1,7 +1,7 @@
 /**
  * LLM service — Copilot implementation of the LlmClient interface.
  *
- * Mirrors the Java LlmClient contract from convengine / convengine-demo:
+ * LlmClient interface:
  *
  *   interface LlmClient {
  *     generateText(hint, context)                     → text output
@@ -470,7 +470,7 @@ export async function callAgent(req: AgentRequest): Promise<AgentResponse> {
   }
 
   const t0 = Date.now();
-  const client = createCustomProviderClient(customKey);
+  const client = await createCustomProviderClient(customKey);
   const bag = buildBag(req.input);
   const systemPrompt = interpolateBag(agent.systemPrompt ?? '', bag);
   const userPrompt   = interpolateBag(agent.userPrompt ?? '{{input}}', bag);

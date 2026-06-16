@@ -1,7 +1,8 @@
 /** ForEach loop — iterate each item of an array/object. */
 import { LoopIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ForEachBlock = {
+export const ForEachBlock = defineCk8tBlock({
   type: 'for_each',
   name: 'ForEach Loop',
   description: 'Iterate each item of a collection',
@@ -19,4 +20,4 @@ export const ForEachBlock = {
     iterations: { type: 'array', description: 'Per-item outputs' },
     last: { type: 'json', description: 'Output from the final item' },
   },
-}
+})

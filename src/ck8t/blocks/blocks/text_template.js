@@ -7,8 +7,9 @@
  * or from a single {{input}} token.
  */
 import { TextTemplateIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const TextTemplateBlock = {
+export const TextTemplateBlock = defineCk8tBlock({
   type: 'text_template',
   name: 'Text Template',
   description: 'Interpolate {{vars}} into a template string',
@@ -35,4 +36,4 @@ export const TextTemplateBlock = {
   outputs: {
     result: { type: 'string', description: 'Interpolated text output' },
   },
-}
+})

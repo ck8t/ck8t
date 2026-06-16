@@ -11,12 +11,17 @@ import mcpRoutes from './routes/mcp.js'
 import healthRoutes from './routes/health.js'
 import deployRoutes from './routes/deploy.js'
 import providerRoutes from './routes/provider.js'
+import blockManagerRoutes from './routes/block-manager.js'
+import { loadServerRunners } from './services/block-manager.js'
 
 async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: {
-      level: 'info',
-    },
+    logger: { level: 'info' },
+    // Disable socket and request timeouts so long MCP tool calls (e.g. MLX
+    // image generation that can take many minutes) don't get cut off by the
+    // HTTP layer before the application-level 1-hour timeout fires.
+    connectionTimeout: 0,
+    keepAliveTimeout: 0,
   })
 
   // -- Plugins --
@@ -36,7 +41,7 @@ async function buildServer(): Promise<FastifyInstance> {
     },
   )
 
-  // -- Routes (all under /api/v1 to match convengine-demo convention) --
+  // -- Routes --
   await app.register(async function apiV1(api) {
     await api.register(agentRoutes)
     await api.register(runRoutes)
@@ -44,6 +49,7 @@ async function buildServer(): Promise<FastifyInstance> {
     await api.register(mcpRoutes)
     await api.register(providerRoutes)
     await api.register(deployRoutes)
+    await api.register(blockManagerRoutes)
   }, { prefix: '/api/v1' })
 
   // Health check stays at root
@@ -53,12 +59,12 @@ async function buildServer(): Promise<FastifyInstance> {
 }
 
 async function start(): Promise<void> {
+  loadServerRunners()
   const app = await buildServer()
 
   try {
     await app.listen({ port: config.port, host: config.host })
     app.log.info("Server listening on http://" + config.host + ":" + config.port)
-    app.log.info("ConvEngine base URL: " + config.convengineBase)
   } catch (err) {
     app.log.error(err)
     process.exit(1)

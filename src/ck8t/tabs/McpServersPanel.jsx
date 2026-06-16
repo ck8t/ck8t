@@ -1,15 +1,9 @@
 /**
  * MCP Servers management panel (embedded in the Settings tab).
- *
- * Displays the list of configured MCP servers, lets the user add / edit /
- * remove them, and triggers a tool-refresh so the dropdowns in the Inspector
- * immediately reflect the new config. All changes are persisted on the
- * backend via the REST API (see {@code McpController}).
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMcpStore } from '../mcp/mcp-store'
 import { McpIcon, PlusIcon, TrashIcon } from '../components/icons'
-import ConfirmModal from '../components/ConfirmModal'
 import StyledSelect from '../components/StyledSelect'
 
 const EMPTY = {
@@ -33,10 +27,11 @@ export default function McpServersPanel() {
   const loadTools = useMcpStore((s) => s.loadTools)
   const toolsByServer = useMcpStore((s) => s.toolsByServer)
 
-  const [editing, setEditing] = useState(null) // form state or null
+  const [editing, setEditing] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [toolsFor, setToolsFor] = useState(null) // expanded server id
-  const [pendingDelete, setPendingDelete] = useState(null) // server id awaiting confirm
+  const [toolsFor, setToolsFor] = useState(null)
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const _autoProbedRef = useRef(false)
 
   const isWarn = typeof error === 'string' && (
     /MCP warning:/i.test(error) ||
@@ -45,6 +40,14 @@ export default function McpServersPanel() {
   )
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Auto-probe all servers once after the list loads so dots turn green on reopen
+  useEffect(() => {
+    if (servers.length > 0 && !_autoProbedRef.current) {
+      _autoProbedRef.current = true
+      servers.forEach(s => loadTools(s.id, { refresh: false }))
+    }
+  }, [servers, loadTools])
 
   async function handleSave() {
     setBusy(true)
@@ -58,16 +61,6 @@ export default function McpServersPanel() {
     }
   }
 
-  async function handleDelete(id) {
-    setPendingDelete(id)
-  }
-
-  async function confirmDelete() {
-    const id = pendingDelete
-    setPendingDelete(null)
-    try { await remove(id) } catch (e) { alert(e.message) }
-  }
-
   async function handleShowTools(id) {
     if (toolsFor === id) { setToolsFor(null); return }
     setToolsFor(id)
@@ -76,6 +69,7 @@ export default function McpServersPanel() {
 
   return (
     <div className="bs-mcp-panel">
+      {/* Header */}
       <div className="bs-mcp-panel-head">
         <McpIcon className="bs-ico-sm" />
         <h3 className="bs-settings-h3">MCP Servers</h3>
@@ -84,12 +78,12 @@ export default function McpServersPanel() {
             className="bs-icon-btn"
             onClick={refresh}
             disabled={loading}
-            title="Refresh list"
+            title="Refresh"
             aria-label="Refresh"
           >
             <span className={`bs-refresh-glyph ${loading ? 'is-spinning' : ''}`}>⟳</span>
           </button>
-          <button className="bs-btn bs-btn-accent" onClick={() => setEditing({ ...EMPTY })}>
+          <button className="bs-mcp-add-btn" onClick={() => setEditing({ ...EMPTY })}>
             <PlusIcon className="bs-ico-xs" />
             <span>Add server</span>
           </button>
@@ -98,60 +92,117 @@ export default function McpServersPanel() {
 
       {error && <div className={isWarn ? 'bs-mcp-warn' : 'bs-mcp-error'}>{error}</div>}
 
-      {servers.length === 0 && !loading && !editing && (
-        <div className="bs-hint">
-          No MCP servers configured yet. Click <b>Add server</b> to connect to one
-          (stdio spawns a subprocess like <code>npx -y @modelcontextprotocol/server-filesystem /tmp</code>,
-          HTTP hits a JSON-RPC endpoint).
-        </div>
-      )}
+      {/* Server list */}
+      <div className="bs-mcp-list">
+        {servers.length === 0 && !loading && !editing && (
+          <div className="bs-mcp-empty">
+            No MCP servers configured yet. Click <b>Add server</b> to connect one.
+          </div>
+        )}
 
-      <ul className="bs-mcp-list">
         {servers.map((s) => {
           const tools = toolsByServer[s.id]
+          const toolsOpen = toolsFor === s.id
+          const hasTools = Array.isArray(tools) && tools.length > 0
+          const endpoint = s.transport === 'STDIO'
+            ? [s.command, ...(s.args || [])].filter(Boolean).join(' ')
+            : s.url || ''
+
           return (
-            <li key={s.id} className="bs-mcp-row">
-              <div className="bs-mcp-row-main">
-                <div className="bs-mcp-row-name">{s.name || s.id}</div>
-                <div className="bs-mcp-row-meta">
-                  <span className="bs-mcp-badge">{s.transport?.toLowerCase()}</span>
-                  <code className="bs-mcp-row-endpoint">
-                    {s.transport === 'STDIO' ? `${s.command || '?'} ${(s.args || []).join(' ')}` : s.url || '?'}
-                  </code>
+            <div key={s.id} className="bs-mcp-row">
+              {/* Main row */}
+              <div className="bs-mcp-row-head">
+                {/* Status dot — green if tools loaded, muted otherwise */}
+                <span
+                  className="bs-mcp-dot"
+                  style={{ background: hasTools ? '#22c55e' : toolsOpen ? '#f59e0b' : '#4b5563' }}
+                  title={hasTools ? `${tools.length} tools loaded` : 'Not probed'}
+                />
+
+                {/* Name */}
+                <span className="bs-mcp-row-name">{s.name || s.id}</span>
+
+                {/* Transport badge */}
+                <span className="bs-mcp-badge">{(s.transport || 'stdio').toLowerCase()}</span>
+
+                {/* Command/URL (truncated) */}
+                <code className="bs-mcp-row-endpoint">{endpoint}</code>
+
+                {/* Tool count */}
+                {hasTools && (
+                  <span className="bs-mcp-tool-count">{tools.length} tools</span>
+                )}
+
+                {/* Actions */}
+                <div className="bs-mcp-row-actions">
+                  <button
+                    className="bs-mcp-ghost-btn"
+                    onClick={() => handleShowTools(s.id)}
+                  >
+                    {toolsOpen ? 'Hide tools' : 'Tools'}
+                  </button>
+                  <button
+                    className="bs-mcp-ghost-btn"
+                    onClick={() => setEditing(configToForm(s))}
+                  >
+                    Edit
+                  </button>
+                  {confirmDeleteId === s.id ? (
+                    <div className="bs-mcp-confirm-del" onClick={(e) => e.stopPropagation()}>
+                      <span>Delete?</span>
+                      <button
+                        className="bs-mcp-confirm-yes"
+                        onClick={async () => {
+                          setConfirmDeleteId(null)
+                          try { await remove(s.id) } catch (e) { alert(e.message) }
+                        }}
+                      >Yes</button>
+                      <button
+                        className="bs-mcp-confirm-no"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      className="bs-mcp-ghost-btn bs-mcp-del-btn"
+                      onClick={() => setConfirmDeleteId(s.id)}
+                      title="Remove server"
+                    >
+                      <TrashIcon className="bs-ico-xs" />
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="bs-mcp-row-actions">
-                <button className="bs-btn-ghost" onClick={() => handleShowTools(s.id)}>
-                  {toolsFor === s.id ? 'Hide tools' : 'Tools'}
-                </button>
-                <button className="bs-btn-ghost" onClick={() => setEditing(configToForm(s))}>Edit</button>
-                <button className="bs-btn-ghost bs-danger" onClick={() => handleDelete(s.id)} title="Delete">
-                  <TrashIcon className="bs-ico-xs" />
-                </button>
-              </div>
-              {toolsFor === s.id && (
+
+              {/* Tool list */}
+              {toolsOpen && (
                 <div className="bs-mcp-tools">
                   {tools == null ? (
-                    <div className="bs-hint">Loading tools…</div>
+                    <div className="bs-mcp-tools-loading">Loading tools…</div>
                   ) : tools.length === 0 ? (
-                    <div className="bs-hint">No tools advertised (or server not reachable).</div>
+                    <div className="bs-mcp-tools-loading">No tools advertised (or server not reachable).</div>
                   ) : (
                     <ul className="bs-mcp-tools-list">
                       {tools.map((t) => (
-                        <li key={t.name}>
-                          <code>{t.name}</code>
-                          {t.description && <span className="bs-mcp-tool-desc"> — {t.description}</span>}
+                        <li key={t.name} className="bs-mcp-tool-row">
+                          <code className="bs-mcp-tool-name">{t.name}</code>
+                          {t.description && (
+                            <span className="bs-mcp-tool-desc" title={t.description}>
+                              {t.description}
+                            </span>
+                          )}
                         </li>
                       ))}
                     </ul>
                   )}
                 </div>
               )}
-            </li>
+            </div>
           )
         })}
-      </ul>
+      </div>
 
+      {/* Add / Edit form */}
       {editing && (
         <McpServerForm
           form={editing}
@@ -159,16 +210,6 @@ export default function McpServersPanel() {
           onSave={handleSave}
           onCancel={() => setEditing(null)}
           busy={busy}
-        />
-      )}
-
-      {pendingDelete && (
-        <ConfirmModal
-          title="Delete MCP server?"
-          message="This server and its configuration will be removed. This cannot be undone."
-          confirmLabel="Delete"
-          onConfirm={confirmDelete}
-          onCancel={() => setPendingDelete(null)}
         />
       )}
     </div>
@@ -183,7 +224,7 @@ function McpServerForm({ form, setForm, onSave, onCancel, busy }) {
 
       <div className="bs-field">
         <label className="bs-label">Name</label>
-        <input className="bs-input" value={form.name} onChange={(e) => up('name', e.target.value)} placeholder="Filesystem (local)" />
+        <input className="bs-input" value={form.name} onChange={(e) => up('name', e.target.value)} placeholder="e.g. ideogram4" />
       </div>
 
       <div className="bs-field">
@@ -216,13 +257,13 @@ function McpServerForm({ form, setForm, onSave, onCancel, busy }) {
             />
           </div>
           <div className="bs-field">
-            <label className="bs-label">Environment (KEY=value per line, optional)</label>
+            <label className="bs-label">Environment (KEY=value per line)</label>
             <textarea
               className="bs-textarea"
               rows={3}
               value={form.env}
               onChange={(e) => up('env', e.target.value)}
-              placeholder={'GITHUB_TOKEN=ghp_xxx'}
+              placeholder={'ANTHROPIC_API_KEY=sk-ant-xxx'}
             />
           </div>
         </>
@@ -233,7 +274,7 @@ function McpServerForm({ form, setForm, onSave, onCancel, busy }) {
             <input className="bs-input" value={form.url} onChange={(e) => up('url', e.target.value)} placeholder="https://example.com/mcp" />
           </div>
           <div className="bs-field">
-            <label className="bs-label">Headers (KEY: value per line, optional)</label>
+            <label className="bs-label">Headers (KEY: value per line)</label>
             <textarea
               className="bs-textarea"
               rows={3}
@@ -254,8 +295,6 @@ function McpServerForm({ form, setForm, onSave, onCancel, busy }) {
     </div>
   )
 }
-
-/* ---- form ⇄ config conversions ---- */
 
 function configToForm(cfg) {
   return {

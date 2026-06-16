@@ -95,24 +95,25 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile",
-    "build": "cd ../../.. && VITE_CONVENGINE_BASE=BRIDGE_BASE_PLACEHOLDER vite build --config vite.extension.config.js",
+    "compile": "node esbuild.js",
+    "vscode:prepublish": "node esbuild.js --production",
     "package": "vsce package"
   },
   "dependencies": {
-    "better-sqlite3": "^12.9.0",
+    "adm-zip": "^0.5.17",
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pdf-lib": "^1.17.1",
+    "sql.js": "^1.14.1"
   },
   "devDependencies": {
-    "@electron/rebuild": "^4.0.4",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/adm-zip": "^0.5.8",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.17.0",
+    "@types/sql.js": "^1.4.11",
     "@types/vscode": "^1.99.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.6.0"
   }
 }

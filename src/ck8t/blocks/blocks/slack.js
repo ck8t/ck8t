@@ -1,7 +1,8 @@
 /** Slack block — send messages and interact with Slack. */
 import { SmtpIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SlackBlock = {
+export const SlackBlock = defineCk8tBlock({
   type: 'slack',
   name: 'Slack',
   description: 'Send messages to Slack channels',
@@ -48,4 +49,4 @@ export const SlackBlock = {
     ts: { type: 'string', description: 'Message timestamp' },
     channel: { type: 'string', description: 'Channel ID' },
   },
-}
+})

@@ -16,6 +16,7 @@
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { AgentRequest, AgentResponse, Workflow, TraceEntry, RunResult } from '../types';
 import { runNs9QueryBlock, runNs9RlhfBlock, runNs9IngestBlock } from './ns9-block';
+import { customBlockRunners, customBlockMeta, emitBlockProgress } from '../services/block-loader';
 
 /* ── Dependency injection types ── */
 
@@ -339,36 +340,103 @@ function runMergeNode(opts: { inputsByHandle: Record<string, unknown> }): Record
   return result;
 }
 
-async function runApiNode(opts: { values: Record<string, unknown>; input: unknown }): Promise<{ data: unknown; status: number; headers: Record<string, string> }> {
+const API_IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+interface ApiNodeParam { Key?: string; Value?: unknown }
+
+/**
+ * Full HTTP client block — url/method/headers/params/body/timeout/retries,
+ * with binary-aware responses so an image API (e.g. Ideogram) can feed
+ * straight into a preview node as a data URI. Auth is just a header
+ * (Authorization / Api-Key / etc.) — exactly like fetch/axios.
+ */
+async function runApiNode(opts: { values: Record<string, unknown>; input: unknown }): Promise<{ data: unknown; status: number; headers: Record<string, string>; error?: string }> {
   const bag: Record<string, unknown> = { input: opts.input };
   if (opts.input && typeof opts.input === 'object' && !Array.isArray(opts.input)) Object.assign(bag, opts.input as Record<string, unknown>);
+  const substitute = (s: string) => interpolateBag(s, bag);
 
-  const method  = String(opts.values.method || 'GET').toUpperCase();
-  const url     = interpolateBag(String(opts.values.url || ''), bag);
-  let rawHeaders = opts.values.headers;
+  const method = String(opts.values.method || 'GET').toUpperCase();
+  let url = substitute(String(opts.values.url || ''));
+
+  let params: ApiNodeParam[] = Array.isArray(opts.values.params) ? (opts.values.params as ApiNodeParam[]) : [];
+  if (typeof opts.values.params === 'string') { try { params = JSON.parse(opts.values.params); } catch { params = []; } }
+  if (params.length > 0) {
+    const qs = params.filter((p) => p.Key).map((p) => encodeURIComponent(p.Key as string) + '=' + encodeURIComponent(substitute(String(p.Value ?? '')))).join('&');
+    url += (url.includes('?') ? '&' : '?') + qs;
+  }
+
+  const rawHeaders = opts.values.headers;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (typeof rawHeaders === 'string') { try { Object.assign(headers, JSON.parse(rawHeaders)); } catch { /* ignore */ } }
-  else if (rawHeaders && typeof rawHeaders === 'object') Object.assign(headers, rawHeaders as Record<string, string>);
+  if (Array.isArray(rawHeaders)) {
+    for (const h of rawHeaders as ApiNodeParam[]) { if (h.Key) headers[h.Key] = substitute(String(h.Value ?? '')); }
+  } else if (typeof rawHeaders === 'string') {
+    try { Object.assign(headers, JSON.parse(rawHeaders)); } catch { /* ignore */ }
+  } else if (rawHeaders && typeof rawHeaders === 'object') {
+    Object.assign(headers, rawHeaders as Record<string, string>);
+  }
 
   let bodyStr: string | undefined;
   if (method !== 'GET' && method !== 'HEAD') {
     const rawBody = opts.values.body;
-    if (rawBody !== undefined && rawBody !== '') bodyStr = typeof rawBody === 'string' ? interpolateBag(rawBody, bag) : JSON.stringify(rawBody);
+    if (rawBody !== undefined && rawBody !== '') bodyStr = typeof rawBody === 'string' ? substitute(rawBody) : JSON.stringify(rawBody);
   }
 
-  const t0  = Date.now();
-  const res = await fetch(url, { method, headers, body: bodyStr });
-  const ms  = Date.now() - t0;
-  let data: unknown;
-  const ct = res.headers.get('content-type') || '';
-  if (ct.includes('application/json')) { try { data = await res.json(); } catch { data = await res.text(); } }
-  else data = await res.text();
+  const timeoutMs = Number(opts.values.timeout) > 0 ? Number(opts.values.timeout) : 300_000;
+  const maxRetries = Math.max(0, Number(opts.values.retries) || 0);
+  const retryDelayMs = Number(opts.values.retryDelayMs) > 0 ? Number(opts.values.retryDelayMs) : 500;
+  const retryMaxDelayMs = Number(opts.values.retryMaxDelayMs) > 0 ? Number(opts.values.retryMaxDelayMs) : 30_000;
+  const canRetry = API_IDEMPOTENT_METHODS.has(method) || opts.values.retryNonIdempotent === true;
 
-  const outHeaders: Record<string, string> = {};
-  res.headers.forEach((v, k) => { outHeaders[k] = v; });
-  outHeaders['x-duration-ms'] = String(ms);
+  const attemptFetch = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const t0 = Date.now();
+    try {
+      const res = await fetch(url, { method, headers, body: bodyStr, signal: controller.signal });
+      const ms = Date.now() - t0;
+      const ct = res.headers.get('content-type') || '';
+      let data: unknown;
+      if (ct.includes('application/json')) {
+        try { data = await res.json(); } catch { data = await res.text(); }
+      } else if (/^image\//.test(ct) || ct === 'application/octet-stream' || ct === 'application/pdf') {
+        const buf = await res.arrayBuffer();
+        data = `data:${ct};base64,${Buffer.from(buf).toString('base64')}`;
+      } else {
+        data = await res.text();
+      }
+      const outHeaders: Record<string, string> = {};
+      res.headers.forEach((v, k) => { outHeaders[k] = v; });
+      outHeaders['x-duration-ms'] = String(ms);
+      return { data, status: res.status, headers: outHeaders, ok: res.ok };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
-  return { data, status: res.status, headers: outHeaders };
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await attemptFetch();
+      if (!result.ok && result.status >= 500 && attempt < maxRetries && canRetry) {
+        lastErr = new Error(`HTTP ${result.status}`);
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      const { ok: _ok, ...rest } = result;
+      return rest;
+    } catch (err: unknown) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries && canRetry) {
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      break;
+    }
+  }
+  const message = lastErr?.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : (lastErr?.message || 'Request failed');
+  return { data: null, status: 0, headers: {}, error: message };
 }
 
 function runCryptoNode(opts: { values: Record<string, unknown>; input: unknown }): unknown {
@@ -443,6 +511,176 @@ async function runAiClassifierNode(opts: {
   }
 }
 
+// ── Chain of Thought / Multi-agent blocks (Sprint 16) ─────────────────────
+
+async function runChainOfThoughtNode(opts: {
+  node: { id: string; data?: Record<string, unknown> };
+  values: Record<string, unknown>;
+  input: unknown;
+  callAgent: CallAgentFn;
+}): Promise<{ reasoning_steps: string[]; conclusion: string; confidence: number; full_response: unknown }> {
+  const { node, values, input, callAgent } = opts;
+  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
+  const effort = String(values.effort || 'medium');
+  const stepCount = effort === 'low' ? '2–3' : effort === 'high' ? '6–8' : '4–5';
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) throw new Error(`No model configured for Chain of Thought block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
+
+  const systemPrompt =
+    `You are a careful reasoning engine. When given a question you MUST:\n` +
+    `1. Write ${stepCount} numbered reasoning steps (prefix each with "Step N: ...")\n` +
+    `2. State a final conclusion\n3. Rate your confidence 0–1\n\n` +
+    `Respond ONLY with valid JSON:\n{"reasoning_steps":["Step 1: ..."],"conclusion":"...","confidence":0.85}`;
+
+  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question;
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+
+  let parsed: Record<string, unknown> = {};
+  try {
+    const res = await callAgent({ agent: { id: node.id, model: rawModel, temperature: 0.2, systemPrompt, userPrompt }, input: inputStr });
+    const raw = res.output.trim();
+    parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+  } catch {
+    return { reasoning_steps: [], conclusion: inputStr, confidence: 0.5, full_response: parsed };
+  }
+  return {
+    reasoning_steps: Array.isArray(parsed.reasoning_steps) ? (parsed.reasoning_steps as string[]) : [],
+    conclusion: String(parsed.conclusion ?? ''),
+    confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5))),
+    full_response: parsed,
+  };
+}
+
+async function runSlaveAgentNode(opts: {
+  node: { id: string; data?: Record<string, unknown> };
+  values: Record<string, unknown>;
+  input: unknown;
+  callAgent: CallAgentFn;
+}): Promise<{ answer: string; cited_nodes: string[]; confidence: number; needs_clarification: boolean }> {
+  const { node, values, input, callAgent } = opts;
+  const task = String(values.task || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) throw new Error(`No model configured for Slave Agent block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
+
+  const capabilityLabel = String(values.capabilityLabel || 'specialist');
+  const systemPrompt = String(values.systemPrompt ||
+    `You are a specialist agent (${capabilityLabel}). Answer the given task concisely. ` +
+    `Respond with JSON: {"answer":"...","cited_nodes":[],"confidence":0.8,"needs_clarification":false}`
+  );
+  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nTask:\n${task}` : task;
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
+
+  try {
+    const res = await callAgent({ agent: { id: node.id, model: rawModel, temperature: 0.3, systemPrompt, userPrompt }, input: inputStr });
+    const raw = res.output.trim();
+    const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+    return {
+      answer: String(parsed.answer ?? raw),
+      cited_nodes: Array.isArray(parsed.cited_nodes) ? parsed.cited_nodes : [],
+      confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.7))),
+      needs_clarification: Boolean(parsed.needs_clarification ?? false),
+    };
+  } catch {
+    return { answer: task, cited_nodes: [], confidence: 0.5, needs_clarification: false };
+  }
+}
+
+interface MasterCotStep { id: string; sub_question: string; capability: string; depends_on: string[] }
+
+function topoSortSteps(steps: MasterCotStep[]): MasterCotStep[][] {
+  const layers: MasterCotStep[][] = [];
+  const resolved = new Set<string>();
+  let remaining = [...steps];
+  let guard = steps.length + 2;
+  while (remaining.length > 0 && guard-- > 0) {
+    const ready = remaining.filter((s) => s.depends_on.every((d) => resolved.has(d)));
+    if (ready.length === 0) { layers.push(remaining); break; }
+    layers.push(ready);
+    ready.forEach((s) => resolved.add(s.id));
+    remaining = remaining.filter((s) => !resolved.has(s.id));
+  }
+  return layers;
+}
+
+async function runMasterAgentNode(opts: {
+  node: { id: string; data?: Record<string, unknown> };
+  values: Record<string, unknown>;
+  input: unknown;
+  allNodes: { id: string; data?: Record<string, unknown> }[];
+  subBlockValues: Record<string, Record<string, unknown>>;
+  callAgent: CallAgentFn;
+}): Promise<{ final_answer: string; slave_outputs: Record<string, unknown>; cot_plan: unknown; confidence: number }> {
+  const { node, values, input, allNodes, subBlockValues, callAgent } = opts;
+  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
+  const rawModel = values.model ? String(values.model) : null;
+  if (!rawModel) throw new Error(`No model configured for Master Agent block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
+
+  const slaveNodes = allNodes.filter((n) => n.data?.blockType === 'slave_agent');
+  const slaveCapabilities = slaveNodes.map((n) => ({
+    nodeId: n.id,
+    capability: String((subBlockValues[n.id] ?? {}).capabilityLabel || n.data?.title || n.id),
+  }));
+
+  const capabilityList = slaveCapabilities.length > 0
+    ? slaveCapabilities.map((sc, i) => `  ${i + 1}. ${sc.capability} (id: ${sc.nodeId})`).join('\n')
+    : '  (no slaves registered — the master will answer directly)';
+
+  const planSystemPrompt =
+    `You are a master orchestrator. Break the question into sub-tasks.\nAvailable slaves:\n${capabilityList}\n\n` +
+    `Respond ONLY with valid JSON:\n{"steps":[{"id":"step_1","sub_question":"...","capability":"<label>","depends_on":[]}]}`;
+  const planUserPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question;
+
+  let cotPlan: MasterCotStep[] = [];
+  let rawPlanJson: unknown = null;
+  try {
+    const planRes = await callAgent({ agent: { id: node.id + '_plan', model: rawModel, temperature: 0.3, systemPrompt: planSystemPrompt, userPrompt: planUserPrompt }, input: question });
+    const planRaw = planRes.output.trim();
+    rawPlanJson = JSON.parse(planRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+    cotPlan = (rawPlanJson as { steps: MasterCotStep[] }).steps ?? [];
+  } catch {
+    cotPlan = slaveCapabilities.map((sc, i) => ({ id: `step_${i + 1}`, sub_question: question, capability: sc.capability, depends_on: [] }));
+    rawPlanJson = { steps: cotPlan, fallback: true };
+  }
+
+  const capabilityToNodeId = Object.fromEntries(slaveCapabilities.map((sc) => [sc.capability, sc.nodeId]));
+  const slaveOutputs: Record<string, unknown> = {};
+  let sharedContext = contextStr;
+
+  for (const layer of topoSortSteps(cotPlan)) {
+    const results = await Promise.allSettled(layer.map(async (step) => {
+      const slaveNodeId = capabilityToNodeId[step.capability];
+      const slaveNode = slaveNodeId ? allNodes.find((n) => n.id === slaveNodeId) : null;
+      if (!slaveNode) return { stepId: step.id, result: { answer: `No slave for capability: ${step.capability}`, cited_nodes: [], confidence: 0.3, needs_clarification: false } };
+      const slaveValues = subBlockValues[slaveNode.id] ?? {};
+      const result = await runSlaveAgentNode({ node: slaveNode, values: { ...slaveValues, task: step.sub_question, context: sharedContext }, input: step.sub_question, callAgent });
+      return { stepId: step.id, result };
+    }));
+    for (const settled of results) {
+      if (settled.status === 'fulfilled') {
+        slaveOutputs[settled.value.stepId] = settled.value.result;
+        sharedContext += `\n\n[${settled.value.stepId}] ${(settled.value.result as { answer?: string }).answer ?? ''}`;
+      }
+    }
+  }
+
+  const evidenceParts = Object.entries(slaveOutputs).map(([id, r]) => `[${id}] ${(r as { answer?: string }).answer ?? ''}`).join('\n\n');
+  const synthSystem = String(values.synthesisPrompt || `You are a synthesis agent. Produce a concise final answer. Respond with JSON: {"final_answer":"...","confidence":0.9}`);
+  const synthUserPrompt = `Question:\n${question}\n\nEvidence:\n${evidenceParts}`;
+  let finalAnswer = evidenceParts || question;
+  let confidence = 0.7;
+  try {
+    const synthRes = await callAgent({ agent: { id: node.id + '_synthesis', model: rawModel, temperature: 0.2, systemPrompt: synthSystem, userPrompt: synthUserPrompt }, input: synthUserPrompt });
+    const synthJson = JSON.parse(synthRes.output.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+    finalAnswer = String(synthJson.final_answer ?? finalAnswer);
+    confidence = Math.min(1, Math.max(0, Number(synthJson.confidence ?? 0.7)));
+  } catch { /* use concatenated evidence */ }
+
+  return { final_answer: finalAnswer, slave_outputs: slaveOutputs, cot_plan: rawPlanJson, confidence };
+}
+
 // ── Card port defaults (mirrors io-registry.js cardPortOverrides) ──────────
 // Used to determine disabled-node behaviour: only nodes with BOTH inputs and
 // outputs do a pass-through; others are skipped (produce null).
@@ -491,6 +729,14 @@ const CARD_PORT_DEFAULTS: Record<string, { inputs: string[]; outputs: string[] }
   mongodb:         { inputs: ['input'],  outputs: ['result', 'count', 'insertedId'] },
   redis:           { inputs: ['input'],  outputs: ['result', 'success'] },
   slack:           { inputs: ['input'],  outputs: ['ok', 'ts'] },
+  // Multi-agent orchestration (Sprint 16)
+  chain_of_thought: { inputs: ['question', 'context'], outputs: ['reasoning_steps', 'conclusion', 'confidence', 'full_response'] },
+  master_agent:     { inputs: ['question', 'context'], outputs: ['final_answer', 'slave_outputs', 'cot_plan', 'confidence'] },
+  slave_agent:      { inputs: ['task', 'context'],     outputs: ['answer', 'cited_nodes', 'confidence', 'needs_clarification'] },
+  // NS9 knowledge-graph blocks (Sprint 27)
+  ns9_query:        { inputs: ['input'],  outputs: ['context_text', 'value', 'confidence'] },
+  ns9_rlhf:         { inputs: ['input'],  outputs: ['saved'] },
+  ns9_ingest:       { inputs: ['input'],  outputs: ['triggered'] },
 };
 
 function hasCardInputs(blockType: string): boolean {
@@ -783,7 +1029,7 @@ export async function executeGraph({
               break;
             }
             case 'table': {
-              throw new Error('Table block: requires a database connection via convengine server-side execution.');
+              throw new Error('Table block requires server-side execution. Use ck8t-server to run database blocks.');
             }
             case 'http_response': {
               const statusCode = Number(values.statusCode ?? 200);
@@ -792,19 +1038,19 @@ export async function executeGraph({
               break;
             }
             case 'slack': {
-              throw new Error('Slack block requires server-side execution via convengine. Connect to the convengine backend to send Slack messages.');
+              throw new Error('Slack block requires server-side execution. Use ck8t-server to send Slack messages.');
             }
             case 'smtp': {
-              throw new Error('SMTP block requires server-side execution via convengine. Connect to the convengine backend to send emails.');
+              throw new Error('SMTP block requires server-side execution. Use ck8t-server to send emails.');
             }
             case 'postgresql': {
-              throw new Error('PostgreSQL block requires server-side execution via convengine. Connect to the convengine backend to query your database.');
+              throw new Error('PostgreSQL block requires server-side execution. Use ck8t-server to query your database.');
             }
             case 'redis': {
-              throw new Error('Redis block requires server-side execution via convengine. Connect to the convengine backend to use Redis.');
+              throw new Error('Redis block requires server-side execution. Use ck8t-server to use Redis.');
             }
             case 'mongodb': {
-              throw new Error('MongoDB block requires server-side execution via convengine. Connect to the convengine backend to query MongoDB.');
+              throw new Error('MongoDB block requires server-side execution. Use ck8t-server to query MongoDB.');
             }
             case 'save_to_files': {
               // In VS Code context, emit output — actual file saving is UI-side
@@ -870,6 +1116,19 @@ export async function executeGraph({
               output = input;
               break;
             }
+            // ── Multi-agent orchestration (Sprint 16) ─────────────────── //
+            case 'chain_of_thought': {
+              output = await runChainOfThoughtNode({ node: n, values, input, callAgent });
+              break;
+            }
+            case 'slave_agent': {
+              output = await runSlaveAgentNode({ node: n, values, input, callAgent });
+              break;
+            }
+            case 'master_agent': {
+              output = await runMasterAgentNode({ node: n, values, input, allNodes, subBlockValues, callAgent });
+              break;
+            }
             // ── NS9 blocks (Sprint 27) ────────────────────────────────── //
             case 'ns9_query': {
               output = await runNs9QueryBlock({ values, input, callTool });
@@ -884,7 +1143,32 @@ export async function executeGraph({
               break;
             }
             default: {
-              output = input;
+              // Community blocks installed at ~/.salilvnair/ck8t/blocks/ via Block Manager.
+              const customRun = customBlockRunners.get(blockType);
+              if (customRun) {
+                const blkHasProgress = customBlockMeta.get(blockType)?.hasProgress ?? false;
+                const progressFn = blkHasProgress
+                  ? (data: Record<string, unknown>) => emitBlockProgress(n.id, data)
+                  : undefined;
+                try {
+                  output = await customRun({
+                    values,
+                    input,
+                    inputsByHandle,
+                    outputs,
+                    node: n,
+                    allNodes,
+                    subBlockValues,
+                    callTool,
+                    callAgent: callAgent as Parameters<typeof customRun>[0]['callAgent'],
+                    progress: progressFn,
+                  });
+                } finally {
+                  if (progressFn) emitBlockProgress(n.id, null);
+                }
+              } else {
+                output = input;
+              }
               break;
             }
           }

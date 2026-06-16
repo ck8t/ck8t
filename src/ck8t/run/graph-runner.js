@@ -24,8 +24,10 @@ import { callTool as callMcpTool } from '../mcp/mcp-client'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
+import { useAiProvidersStore, getAiProviderModelOptions } from '../stores/ai-providers-store'
 import { resolvePortType, isTypeCompatible, getCardPorts } from '../panel/io-registry'
-import { getBlock } from '../blocks/registry'
+import { getBlock, customBrowserBlockRunners } from '../blocks/registry'
+import { useMcpProgressStore } from '../stores/mcp-progress-store'
 
 // Validate a runtime value against a declared port type.
 // Returns an error string if mismatch, or null if OK.
@@ -402,7 +404,7 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
           return
         }
 
-        const ran = await runNode({ node: n, values, input, outputs, inputsByHandle })
+        const ran = await runNode({ node: n, values, input, outputs, inputsByHandle, allNodes, subBlockValues })
         // runNode may return either a raw value or `{ __meta, value }` so that
         // agent/mcp blocks can attach rich debugging info (systemPrompt,
         // userPrompt after interpolation, skill output, model, etc.). The meta
@@ -514,7 +516,7 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
 /* Per-block execution                                                        */
 /* ------------------------------------------------------------------------- */
 
-async function runNode({ node, values, input, outputs, inputsByHandle }) {
+async function runNode({ node, values, input, outputs, inputsByHandle, allNodes = [], subBlockValues = {} }) {
   const type = node.data?.blockType
   switch (type) {
     case 'starter':
@@ -591,6 +593,18 @@ async function runNode({ node, values, input, outputs, inputsByHandle }) {
       return runConditionNode({ values, input })
     case 'router_v2':
       return await runRouterV2Node({ node, values, input })
+    case 'chain_of_thought':
+      return await runChainOfThoughtNode({ node, values, input })
+    case 'slave_agent':
+      return await runSlaveAgentNode({ node, values, input })
+    case 'master_agent':
+      return await runMasterAgentNode({ node, values, input, allNodes, subBlockValues })
+    case 'ns9_query':
+      return await runNs9QueryBlock({ values, input })
+    case 'ns9_rlhf':
+      return await runNs9RlhfBlock({ values, input })
+    case 'ns9_ingest':
+      return await runNs9IngestBlock({ values })
     case 'loop':
       throw new Error('Loop block: loop execution is not supported in client-side execution. Connect to the convengine backend to run loop blocks.')
     case 'parallel':
@@ -611,9 +625,21 @@ async function runNode({ node, values, input, outputs, inputsByHandle }) {
       return { firedAt: new Date().toISOString() }
     case 'webhook_request':
       return { body: input, headers: {}, query: {} }
-    default:
-      // Unknown block type: pass input through so the graph keeps moving.
+    default: {
+      const communityRun = customBrowserBlockRunners.get(type)
+      if (communityRun) {
+        const blkCfg = getBlock(type)
+        const progressFn = blkCfg?.hasProgress
+          ? (data) => useMcpProgressStore.getState().setProgress({ nodeId: node.id, ...data })
+          : undefined
+        try {
+          return await communityRun({ values, input, inputsByHandle, outputs, node, allNodes, subBlockValues, progress: progressFn })
+        } finally {
+          if (progressFn) useMcpProgressStore.getState().clearProgress()
+        }
+      }
       return input
+    }
   }
 }
 
@@ -955,12 +981,31 @@ async function runAgentNode({ node, values, input }) {
     }
   }
 
-  // Resolve model & provider from the LLM config store.
+  // Resolve model & provider — the node's own fields always win. But a stored
+  // `values.model` can be stale (e.g. typed/left over from before the
+  // provider was switched) — once the provider is known, validate the model
+  // against THAT provider's own curated list (ai-providers-store) and replace
+  // it with that provider's default/first model if it doesn't actually
+  // belong there, instead of sending garbage straight to the chat API.
   const llmState = useLlmConfigStore.getState()
   const availableModelIds = llmState.models.map((m) => m.id)
-  const rawModel = values.model || llmState.getDefaultModel() || (availableModelIds[0] ?? null)
-  const resolvedModel = availableModelIds.includes(rawModel) ? rawModel : (llmState.getDefaultModel() || rawModel)
-  const resolvedProvider = llmState.getProviderForModel(resolvedModel) || llmState.activeProvider || undefined
+  const resolvedProvider =
+    values.provider ||
+    llmState.getProviderForModel(values.model) ||
+    llmState.getDefaultProvider() ||
+    llmState.activeProvider ||
+    undefined
+
+  let resolvedModel = values.model || llmState.getDefaultModel() || (availableModelIds[0] ?? null)
+  const providerModels = resolvedProvider ? getAiProviderModelOptions(resolvedProvider) : []
+  if (providerModels.length > 0) {
+    if (!providerModels.some((m) => m.id === resolvedModel)) {
+      const aiState = useAiProvidersStore.getState()
+      resolvedModel = (aiState.defaultProviderId === resolvedProvider && aiState.defaultModelId) || providerModels[0].id
+    }
+  } else if (!availableModelIds.includes(resolvedModel)) {
+    resolvedModel = llmState.getDefaultModel() || resolvedModel
+  }
 
   if (!resolvedModel) {
     const nodeTitle = node.data?.title || node.id
@@ -1316,31 +1361,133 @@ function runSwitchNode({ values, input }) {
 }
 
 /**
+ * Extract a data-URI (image or PDF) embedded anywhere in a block output.
+ * Handles: direct data-URI string, markdown ![...](data:...), MCP content
+ * arrays [{type:'text',text:'...data:...'}], and objects with image/path fields.
+ * Returns { dataUri, mimeType } or null.
+ */
+export function extractMediaUri(value) {
+  if (!value) return null
+  if (typeof value === 'string') {
+    // Inline data URI
+    const m = value.match(/data:(image\/[^;,]+|application\/pdf);base64,([A-Za-z0-9+/=\n]+)/)
+    if (m) return { dataUri: m[0].replace(/\s/g, ''), mimeType: m[1] }
+    // Markdown image embedding: ![alt](data:...)
+    const md = value.match(/!\[[^\]]*\]\((data:(?:image\/[^);]+|application\/pdf);base64,[A-Za-z0-9+/=\n]+)\)/)
+    if (md) return extractMediaUri(md[1])
+    return null
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      // MCP image content item: {type:'image', data:'...', mimeType:'image/png'}
+      if (item?.type === 'image' && item.data)
+        return { dataUri: `data:${item.mimeType ?? 'image/png'};base64,${item.data}`, mimeType: item.mimeType ?? 'image/png' }
+      // MCP text item containing embedded data URI
+      if (item?.type === 'text' && item.text) {
+        const found = extractMediaUri(item.text)
+        if (found) return found
+      }
+    }
+    return null
+  }
+  if (typeof value === 'object') {
+    // Objects with known image fields
+    for (const k of ['image', 'image_data', 'imageData', 'base64', 'data', 'content', 'pdf', 'file']) {
+      if (value[k]) { const r = extractMediaUri(value[k]); if (r) return r }
+    }
+  }
+  return null
+}
+
+/**
+ * base64 string → Uint8Array (handles whitespace-padded base64)
+ */
+function b64ToBytes(b64) {
+  return Uint8Array.from(atob(b64.replace(/\s/g, '')), (c) => c.charCodeAt(0))
+}
+
+/**
  * Save-to-Files: optionally triggers a browser download with the upstream
  * payload, and always passes the payload through so downstream (or the
  * inline json-preview area on the card) can see it.
+ * Supports JSON, raw text, PDF (base64 → binary), and binary (base64 → binary).
  */
 function runSaveToFiles({ values, input }) {
   const fmt = values.format || 'json'
-  const body = fmt === 'raw' || typeof input === 'string'
-    ? (typeof input === 'string' ? input : JSON.stringify(input))
-    : JSON.stringify(input, null, 2)
-  const result = { savedAt: null, bytes: body.length, payload: input }
+  const defaultFilename = (values.filename || '').trim() || 'output'
+  const filenameHint = (values.path || '').trim().replace(/^.*[\\/]/, '') || defaultFilename
+
+  const result = { savedAt: null, bytes: 0, payload: input }
+
+  const vsApi = typeof window !== 'undefined' && window.__CK8T_VSCODE_API__
+
+  // ── Determine blob / content ─────────────────────────────────────────────
+  let blob = null
+  let downloadName = filenameHint
+  let b64ForVscode = null  // set when VS Code should write binary
+
+  if (fmt === 'pdf' || fmt === 'binary') {
+    // Try to extract a data URI from the input (MCP array, object, string)
+    const media = extractMediaUri(input)
+    if (media) {
+      const ext = media.mimeType === 'application/pdf' ? '.pdf'
+        : media.mimeType.replace('image/', '.')
+      const b64 = media.dataUri.split(',')[1]
+      const bytes = b64ToBytes(b64)
+      blob = new Blob([bytes], { type: media.mimeType })
+      result.bytes = bytes.length
+      if (!downloadName.includes('.')) downloadName += ext
+      b64ForVscode = b64
+    } else if (typeof input === 'string' && /^[A-Za-z0-9+/]+=*$/.test(input.trim())) {
+      // Raw base64 string — treat as the target format
+      const mime = fmt === 'pdf' ? 'application/pdf' : 'application/octet-stream'
+      const ext  = fmt === 'pdf' ? '.pdf' : '.bin'
+      const bytes = b64ToBytes(input.trim())
+      blob = new Blob([bytes], { type: mime })
+      result.bytes = bytes.length
+      if (!downloadName.includes('.')) downloadName += ext
+      b64ForVscode = input.trim()
+    }
+  }
+
+  if (!blob) {
+    // Text / JSON fallback
+    const body = fmt === 'raw' || typeof input === 'string'
+      ? (typeof input === 'string' ? input : JSON.stringify(input))
+      : JSON.stringify(input, null, 2)
+    blob = new Blob([body], { type: fmt === 'raw' ? 'text/plain' : 'application/json' })
+    result.bytes = body.length
+    if (!downloadName.includes('.')) downloadName += fmt === 'raw' ? '.txt' : '.json'
+  }
+
+  // ── Trigger save ─────────────────────────────────────────────────────────
   const path = (values.path || '').trim()
-  if (path) {
+  if (path || values.filename) {
     try {
-      const blob = new Blob([body], { type: fmt === 'raw' ? 'text/plain' : 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = path.replace(/^.*[\\/]/, '') || 'output.json'
-      document.body.appendChild(a); a.click(); a.remove()
-      URL.revokeObjectURL(url)
-      result.savedAt = path
+      if (vsApi) {
+        // VS Code extension: delegate to extension host file dialog
+        if (b64ForVscode) {
+          vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: b64ForVscode, format: fmt } })
+        } else {
+          blob.text().then((text) => {
+            vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: text } })
+          })
+        }
+      } else {
+        // Browser: <a download>
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = downloadName
+        document.body.appendChild(a); a.click(); a.remove()
+        URL.revokeObjectURL(url)
+      }
+      result.savedAt = path || downloadName
     } catch (e) {
       result.error = e.message || String(e)
     }
   }
+
   return input // pass-through so the preview area shows the actual payload
 }
 
@@ -1369,12 +1516,43 @@ function runJsonValidator({ values, input }) {
 /* Server-parity block handlers (ported from graph-runner.ts)                */
 /* ------------------------------------------------------------------------- */
 
+const API_IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/** Convert an ArrayBuffer to a base64 string without blowing the call stack on large images. */
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
+/**
+ * Full HTTP client block — url/method/headers/params/body/timeout/retries,
+ * same templating the Agent block uses ({{input}} plus any flattened key
+ * from the upstream JSON output), and binary-aware responses so an image API
+ * (e.g. Ideogram) can feed straight into a preview node as a data URI.
+ * Auth is just a header (Authorization / Api-Key / etc.) — exactly like
+ * fetch/axios, no separate "auth" abstraction.
+ */
 async function runApiNode({ values, input, inputsByHandle }) {
   const method = String(values.method || 'GET').toUpperCase()
-  // `in_body` direct wire overrides the static body field; `in_input` (or
-  // just `input`) makes {{input}} available in URL/body templates.
+
+  // Same bag-based templating as runAgentNode's userPrompt: {{input}} plus
+  // every top-level key when the upstream output is a JSON object, so e.g.
+  // {{prompt}} from a magic-prompt API's JSON response can be referenced
+  // directly in the next API call's url/body/headers.
   const inputStr = input !== undefined ? (typeof input === 'string' ? input : JSON.stringify(input ?? '')) : ''
-  const substitute = (s) => typeof s === 'string' && inputStr ? s.replace(/\{\{\s*input\s*\}\}/g, inputStr) : s
+  const bag = { input: inputStr }
+  try {
+    const parsed = JSON.parse(inputStr)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [k, v] of Object.entries(parsed)) bag[k] = v
+    }
+  } catch { /* not JSON — {{input}} is still available */ }
+  const substitute = (s) => typeof s === 'string' ? interpolateBag(s, bag) : s
 
   let url = substitute(String(values.url || ''))
   // Allow a directly-wired node to supply the full URL
@@ -1385,16 +1563,16 @@ async function runApiNode({ values, input, inputsByHandle }) {
   let params = Array.isArray(values.params) ? values.params : []
   if (typeof values.params === 'string') { try { params = JSON.parse(values.params) } catch { params = [] } }
   if (params.length > 0) {
-    const qs = params.filter((p) => p.Key).map((p) => encodeURIComponent(p.Key) + '=' + encodeURIComponent(String(p.Value ?? ''))).join('&')
+    const qs = params.filter((p) => p.Key).map((p) => encodeURIComponent(p.Key) + '=' + encodeURIComponent(substitute(String(p.Value ?? '')))).join('&')
     url += (url.includes('?') ? '&' : '?') + qs
   }
   let headerEntries = Array.isArray(values.headers) ? values.headers : []
   if (typeof values.headers === 'string') { try { headerEntries = JSON.parse(values.headers) } catch { headerEntries = [] } }
   const headers = {}
-  for (const h of headerEntries) { if (h.Key) headers[h.Key] = String(h.Value ?? '') }
+  for (const h of headerEntries) { if (h.Key) headers[h.Key] = substitute(String(h.Value ?? '')) }
   let body
   if (method !== 'GET' && method !== 'HEAD') {
-    // Priority: directly wired `body` handle > directly wired `input` handle > static `body` field with {{input}} substituted
+    // Priority: directly wired `body` handle > directly wired `input` handle > static `body` field with templating
     if (inputsByHandle && inputsByHandle.body != null) {
       const wb = inputsByHandle.body
       body = typeof wb === 'string' ? wb : JSON.stringify(wb)
@@ -1411,16 +1589,64 @@ async function runApiNode({ values, input, inputsByHandle }) {
       }
     }
   }
-  try {
-    const resp = await fetch(url, { method, headers, body })
-    const contentType = resp.headers.get('content-type') || ''
-    const data = contentType.includes('application/json') ? await resp.json() : await resp.text()
-    const respHeaders = {}
-    resp.headers.forEach((v, k) => { respHeaders[k] = v })
-    return { data, status: resp.status, headers: respHeaders }
-  } catch (err) {
-    return { data: null, status: 0, headers: {}, error: err.message }
+
+  const timeoutMs = Number(values.timeout) > 0 ? Number(values.timeout) : 300_000
+  const maxRetries = Math.max(0, Number(values.retries) || 0)
+  const retryDelayMs = Number(values.retryDelayMs) > 0 ? Number(values.retryDelayMs) : 500
+  const retryMaxDelayMs = Number(values.retryMaxDelayMs) > 0 ? Number(values.retryMaxDelayMs) : 30_000
+  const canRetry = API_IDEMPOTENT_METHODS.has(method) || values.retryNonIdempotent === true
+
+  const attemptFetch = async () => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const resp = await fetch(url, { method, headers, body, signal: controller.signal })
+      const contentType = resp.headers.get('content-type') || ''
+      let data
+      if (contentType.includes('application/json')) {
+        data = await resp.json()
+      } else if (/^image\//.test(contentType) || contentType === 'application/octet-stream' || contentType === 'application/pdf') {
+        // Binary response — surface it as a data URI so a preview node can
+        // pick it straight up via extractMediaUri(), same as MCP image content.
+        const buf = await resp.arrayBuffer()
+        data = `data:${contentType};base64,${arrayBufferToBase64(buf)}`
+      } else {
+        data = await resp.text()
+      }
+      const respHeaders = {}
+      resp.headers.forEach((v, k) => { respHeaders[k] = v })
+      return { data, status: resp.status, headers: respHeaders, ok: resp.ok }
+    } finally {
+      clearTimeout(timer)
+    }
   }
+
+  let lastErr = null
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await attemptFetch()
+      // Retry on server errors (5xx) just like a typical axios retry interceptor;
+      // 4xx is a client error and won't be fixed by retrying.
+      if (!result.ok && result.status >= 500 && attempt < maxRetries && canRetry) {
+        lastErr = new Error(`HTTP ${result.status}`)
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        continue
+      }
+      const { ok, ...rest } = result
+      return rest
+    } catch (err) {
+      lastErr = err
+      if (attempt < maxRetries && canRetry) {
+        const delay = Math.min(retryDelayMs * 2 ** attempt, retryMaxDelayMs)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        continue
+      }
+      break
+    }
+  }
+  const message = lastErr?.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : (lastErr?.message || 'Request failed')
+  return { data: null, status: 0, headers: {}, error: message }
 }
 
 async function runDelayNode({ values, input }) {
@@ -1701,6 +1927,172 @@ async function runRouterV2Node({ node, values, input }) {
   }
 }
 
+// ── Chain of Thought / Multi-agent (Sprint 16) ───────────────────────────
+
+async function runChainOfThoughtNode({ node, values, input }) {
+  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
+  const effort = String(values.effort || 'medium')
+  const stepCount = effort === 'low' ? '2–3' : effort === 'high' ? '6–8' : '4–5'
+  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
+  if (!model) throw new GraphValidationError(`No model configured for Chain of Thought "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'chain_of_thought', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
+
+  const systemPrompt =
+    `You are a careful reasoning engine. When given a question you MUST:\n` +
+    `1. Write ${stepCount} numbered reasoning steps (prefix each with "Step N: ...")\n` +
+    `2. State a final conclusion\n3. Rate your confidence 0–1\n\n` +
+    `Respond ONLY with valid JSON:\n{"reasoning_steps":["Step 1: ..."],"conclusion":"...","confidence":0.85}`
+  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question
+  const agent = { id: node.id, model, temperature: 0.2, systemPrompt, userPrompt }
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '')
+  let parsed = {}
+  try {
+    const { response: res } = await callLlmWithFallback(agent, inputStr, node.data?.title || node.id)
+    const raw = String(res?.output ?? res).trim()
+    parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
+  } catch { return { reasoning_steps: [], conclusion: inputStr, confidence: 0.5, full_response: parsed } }
+  return {
+    reasoning_steps: Array.isArray(parsed.reasoning_steps) ? parsed.reasoning_steps : [],
+    conclusion: String(parsed.conclusion ?? ''),
+    confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5))),
+    full_response: parsed,
+  }
+}
+
+async function runSlaveAgentNode({ node, values, input }) {
+  const task = String(values.task || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
+  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
+  if (!model) throw new GraphValidationError(`No model configured for Slave Agent "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'slave_agent', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
+  const capabilityLabel = String(values.capabilityLabel || 'specialist')
+  const systemPrompt = String(values.systemPrompt || `You are a specialist agent (${capabilityLabel}). Answer the given task concisely. Respond with JSON: {"answer":"...","cited_nodes":[],"confidence":0.8,"needs_clarification":false}`)
+  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nTask:\n${task}` : task
+  const agent = { id: node.id, model, temperature: 0.3, systemPrompt, userPrompt }
+  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '')
+  try {
+    const { response: res } = await callLlmWithFallback(agent, inputStr, node.data?.title || node.id)
+    const raw = String(res?.output ?? res).trim()
+    const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
+    return { answer: String(parsed.answer ?? raw), cited_nodes: Array.isArray(parsed.cited_nodes) ? parsed.cited_nodes : [], confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.7))), needs_clarification: Boolean(parsed.needs_clarification ?? false) }
+  } catch { return { answer: task, cited_nodes: [], confidence: 0.5, needs_clarification: false } }
+}
+
+function _topoSortSteps(steps) {
+  const layers = []
+  const resolved = new Set()
+  let remaining = [...steps]
+  let guard = steps.length + 2
+  while (remaining.length > 0 && guard-- > 0) {
+    const ready = remaining.filter((s) => s.depends_on.every((d) => resolved.has(d)))
+    if (ready.length === 0) { layers.push(remaining); break }
+    layers.push(ready)
+    ready.forEach((s) => resolved.add(s.id))
+    remaining = remaining.filter((s) => !resolved.has(s.id))
+  }
+  return layers
+}
+
+async function runMasterAgentNode({ node, values, input, allNodes, subBlockValues }) {
+  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
+  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
+  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
+  if (!model) throw new GraphValidationError(`No model configured for Master Agent "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'master_agent', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
+
+  const slaveNodes = (allNodes || []).filter((n) => n.data?.blockType === 'slave_agent')
+  const slaveCapabilities = slaveNodes.map((n) => ({ nodeId: n.id, capability: String((subBlockValues[n.id] ?? {}).capabilityLabel || n.data?.title || n.id) }))
+  const capabilityList = slaveCapabilities.length > 0
+    ? slaveCapabilities.map((sc, i) => `  ${i + 1}. ${sc.capability} (id: ${sc.nodeId})`).join('\n')
+    : '  (no slaves — master will answer directly)'
+  const planSysPrompt = `You are a master orchestrator. Break the question into sub-tasks.\nAvailable slaves:\n${capabilityList}\n\nRespond ONLY with valid JSON:\n{"steps":[{"id":"step_1","sub_question":"...","capability":"<label>","depends_on":[]}]}`
+  const planUserPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question
+
+  let cotPlan = [], rawPlanJson = null
+  try {
+    const { response: planRes } = await callLlmWithFallback({ id: node.id + '_plan', model, temperature: 0.3, systemPrompt: planSysPrompt, userPrompt: planUserPrompt }, question, node.data?.title || node.id)
+    const planRaw = String(planRes?.output ?? planRes).trim()
+    rawPlanJson = JSON.parse(planRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
+    cotPlan = rawPlanJson.steps ?? []
+  } catch {
+    cotPlan = slaveCapabilities.map((sc, i) => ({ id: `step_${i + 1}`, sub_question: question, capability: sc.capability, depends_on: [] }))
+    rawPlanJson = { steps: cotPlan, fallback: true }
+  }
+
+  const capToNodeId = Object.fromEntries(slaveCapabilities.map((sc) => [sc.capability, sc.nodeId]))
+  const slaveOutputs = {}
+  let sharedCtx = contextStr
+  for (const layer of _topoSortSteps(cotPlan)) {
+    const results = await Promise.allSettled(layer.map(async (step) => {
+      const slaveNodeId = capToNodeId[step.capability]
+      const slaveNode = slaveNodeId ? (allNodes || []).find((n) => n.id === slaveNodeId) : null
+      if (!slaveNode) return { stepId: step.id, result: { answer: `No slave for: ${step.capability}`, cited_nodes: [], confidence: 0.3, needs_clarification: false } }
+      const sv = subBlockValues[slaveNode.id] ?? {}
+      const result = await runSlaveAgentNode({ node: slaveNode, values: { ...sv, task: step.sub_question, context: sharedCtx }, input: step.sub_question })
+      return { stepId: step.id, result }
+    }))
+    for (const s of results) {
+      if (s.status === 'fulfilled') { slaveOutputs[s.value.stepId] = s.value.result; sharedCtx += `\n\n[${s.value.stepId}] ${s.value.result?.answer ?? ''}` }
+    }
+  }
+
+  const evidenceParts = Object.entries(slaveOutputs).map(([id, r]) => `[${id}] ${r?.answer ?? ''}`).join('\n\n')
+  const synthSys = String(values.synthesisPrompt || `You are a synthesis agent. Produce a concise final answer. Respond with JSON: {"final_answer":"...","confidence":0.9}`)
+  const synthUserPrompt = `Question:\n${question}\n\nEvidence:\n${evidenceParts}`
+  let finalAnswer = evidenceParts || question, confidence = 0.7
+  try {
+    const { response: synthRes } = await callLlmWithFallback({ id: node.id + '_synthesis', model, temperature: 0.2, systemPrompt: synthSys, userPrompt: synthUserPrompt }, synthUserPrompt, node.data?.title || node.id)
+    const synthJson = JSON.parse(String(synthRes?.output ?? synthRes).trim().replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
+    finalAnswer = String(synthJson.final_answer ?? finalAnswer)
+    confidence = Math.min(1, Math.max(0, Number(synthJson.confidence ?? 0.7)))
+  } catch { /* use concatenated evidence */ }
+
+  return { final_answer: finalAnswer, slave_outputs: slaveOutputs, cot_plan: rawPlanJson, confidence }
+}
+
+// ── NS9 blocks (Sprint 27) ───────────────────────────────────────────────
+
+function _ns9Interpolate(template, bag) {
+  return template.replace(/\{\{([^}]+)\}\}/g, (_, key) => { const val = bag[key.trim()]; return val === undefined ? '' : typeof val === 'object' ? JSON.stringify(val) : String(val) })
+}
+function _ns9ToBag(input) {
+  if (input && typeof input === 'object' && !Array.isArray(input)) return input
+  if (typeof input === 'string') { try { return JSON.parse(input) } catch { return { input } } }
+  return { input: String(input ?? '') }
+}
+
+async function runNs9QueryBlock({ values, input }) {
+  const server = String(values.server || 'ns9')
+  const bag    = _ns9ToBag(input)
+  const question = _ns9Interpolate(String(values.question || '{{input}}'), bag)
+  if (!question.trim()) return { error: 'ns9_query: question is empty.', context_text: '', confidence: 0 }
+  try {
+    const result = await callMcpTool(server, 'ns9_query', { question, top_k: Number(values.top_k ?? 10), include_live_data: values.include_live !== false, include_past_qa: values.include_qa !== false })
+    const r = result ?? {}
+    return { ...r, value: r.context_text ?? '' }
+  } catch (err) { return { error: `ns9_query failed: ${err?.message ?? err}`, context_text: '', confidence: 0 } }
+}
+
+async function runNs9RlhfBlock({ values, input }) {
+  const server = String(values.server || 'ns9')
+  const bag    = _ns9ToBag(input)
+  const question      = _ns9Interpolate(String(values.question       || '{{question}}'),       bag)
+  const wrongAnswer   = _ns9Interpolate(String(values.wrong_answer   || '{{wrong_answer}}'),   bag)
+  const correctAnswer = _ns9Interpolate(String(values.correct_answer || '{{correct_answer}}'), bag)
+  if (!question.trim() || !correctAnswer.trim()) return { error: 'ns9_rlhf: question and correct_answer are required.', saved: false }
+  try {
+    return await callMcpTool(server, 'ns9_rlhf_correct', { question, wrong_answer: wrongAnswer, correct_answer: correctAnswer, corrector: String(values.corrector || 'user'), propagate_now: values.propagate_now !== false })
+  } catch (err) { return { error: `ns9_rlhf failed: ${err?.message ?? err}`, saved: false } }
+}
+
+async function runNs9IngestBlock({ values }) {
+  const server = String(values.server || 'ns9')
+  const source = String(values.source || 'all')
+  const args = { source }
+  if (values.path) args.path = String(values.path)
+  try {
+    return await callMcpTool(server, 'ns9_ingest', args)
+  } catch (err) { return { error: `ns9_ingest failed: ${err?.message ?? err}`, triggered: false } }
+}
+
 /* ------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -1858,7 +2250,12 @@ async function runMapperNode({ values, input }) {
       const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? null)
       return await runSkillSource(skill, inputStr)
     }
-    default:
+    default: {
+      const communityRun = customBrowserBlockRunners.get(type)
+      if (communityRun) {
+        return await communityRun({ values, input, inputsByHandle, outputs, node, allNodes, subBlockValues })
+      }
       return input
+    }
   }
 }

@@ -2,7 +2,7 @@
  * InspectModal — wide panel matching the trace-panel Disclosure style.
  * Opened via right-click → "Inspect" on any node after a run.
  */
-import { useRef, useState } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { getBlock } from '../blocks/registry'
 import { getTypeColor } from '../panel/io-registry'
 import JsonView from '../run/JsonView'
@@ -14,12 +14,37 @@ export default function InspectModal({ nodeId, nodeData, traceEntry, onClose }) 
   const t = traceEntry || {}
   const skillRunsRef = useRef(null)
   const llmRunsRef = useRef(null)
+  const [copied, setCopied] = useState(false)
+
+  const copyTrace = useCallback(() => {
+    const payload = {
+      node: title, nodeId, blockType: nodeData?.blockType, ms: t.ms,
+      ...(t.inputsByHandle && Object.keys(t.inputsByHandle).length ? { connectedInputs: t.inputsByHandle } : {}),
+      ...(t.input != null ? { input: t.input } : {}),
+      ...(t.values && Object.keys(t.values).length ? { configuredValues: t.values } : {}),
+      ...(t.output !== undefined ? { output: t.output } : {}),
+      ...(t.error ? { error: t.error } : {}),
+      ...(t.meta ? { meta: t.meta } : {}),
+    }
+    navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
+      .catch(() => {})
+  }, [title, nodeId, nodeData, t])
 
   return (
     <div className="bs-inspect-overlay" onClick={onClose}>
       <div className="bs-inspect-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Sticky close — stays visible when content scrolls */}
+        {/* Sticky topbar — copy + close, stays visible when content scrolls */}
         <div className="bs-inspect-topbar">
+          {traceEntry && (
+            <button className={`bs-inspect-copy ${copied ? 'is-copied' : ''}`} onClick={copyTrace} title={copied ? 'Copied!' : 'Copy full trace as JSON'}>
+              {copied
+                ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              }
+              <span>{copied ? 'Copied!' : 'Copy trace'}</span>
+            </button>
+          )}
           <button className="bs-inspect-close" onClick={onClose} title="Close">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -194,11 +219,11 @@ export default function InspectModal({ nodeId, nodeData, traceEntry, onClose }) 
               <Disclosure label="LLM Runs (1)" defaultOpen anchorRef={llmRunsRef}>
                 <div className="bs-inspect-llm-run">
                   <div className="bs-inspect-llm-section">
-                    <div className="bs-inspect-skill-label">Request → Spring Boot</div>
+                    <div className="bs-inspect-skill-label">Request → LLM</div>
                     <div className="bs-debug-json"><JsonView value={t.meta.llmRequest} collapsible defaultExpanded={2} /></div>
                   </div>
                   <div className="bs-inspect-llm-section">
-                    <div className="bs-inspect-skill-label">Response ← Spring Boot</div>
+                    <div className="bs-inspect-skill-label">Response ← LLM</div>
                     <div className="bs-debug-json"><JsonView value={t.meta.llmResponse} collapsible defaultExpanded={2} /></div>
                   </div>
                 </div>

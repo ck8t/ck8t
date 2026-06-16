@@ -6,8 +6,9 @@
  * port types don't match natively.
  */
 import { MapperIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const MapperBlock = {
+export const MapperBlock = defineCk8tBlock({
   type: 'mapper',
   name: 'Mapper',
   description: 'Convert between types',
@@ -59,4 +60,4 @@ export const MapperBlock = {
   outputs: {
     result: { type: 'any', description: 'Converted value' },
   },
-}
+})

@@ -6,8 +6,9 @@
  * just `data.items` passed to the next block. Configure path as `$.data.items`.
  */
 import { JsonPathIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const JsonPathBlock = {
+export const JsonPathBlock = defineCk8tBlock({
   type: 'json_path',
   name: 'JSON Path',
   description: 'Extract a value from JSON using a path expression',
@@ -39,4 +40,4 @@ export const JsonPathBlock = {
   outputs: {
     result: { type: 'json', description: 'Extracted value (or fallback)' },
   },
-}
+})

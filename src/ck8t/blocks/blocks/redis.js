@@ -1,7 +1,8 @@
 /** Redis block — read/write from Redis cache. */
 import { PostgresIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const RedisBlock = {
+export const RedisBlock = defineCk8tBlock({
   type: 'redis',
   name: 'Redis',
   description: 'Read and write data from Redis',
@@ -55,4 +56,4 @@ export const RedisBlock = {
     result: { type: 'any', description: 'Redis operation result' },
     success: { type: 'boolean', description: 'Whether the operation succeeded' },
   },
-}
+})

@@ -5,8 +5,9 @@
  * to the matching output is the only one that receives the upstream payload.
  */
 import { ConditionalIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const IfElseBlock = {
+export const IfElseBlock = defineCk8tBlock({
   type: 'if_else',
   name: 'If / Else',
   description: 'Branch on a boolean expression — true vs false',
@@ -30,4 +31,4 @@ export const IfElseBlock = {
     false: { type: 'json', description: 'Carries the upstream payload when the expression is falsy' },
   },
   outputHandles: ['true', 'false'],
-}
+})

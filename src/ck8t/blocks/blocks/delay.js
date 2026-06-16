@@ -1,7 +1,8 @@
 /** Delay block — pause workflow execution for a specified duration. */
 import { WaitIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const DelayBlock = {
+export const DelayBlock = defineCk8tBlock({
   type: 'delay',
   name: 'Delay',
   description: 'Pause execution for a set duration',
@@ -50,4 +51,4 @@ export const DelayBlock = {
     output: { type: 'any', description: 'Pass-through input data' },
     elapsed: { type: 'number', description: 'Actual elapsed time in ms' },
   },
-}
+})

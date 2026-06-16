@@ -36,6 +36,7 @@
  * surfaces a "No model provider found" error in Problems/Trace.
  */
 import { create } from 'zustand'
+import { useAiProvidersStore } from './ai-providers-store'
 
 /* ── Well-known provider group names ─────────────────────────────────── */
 const PROVIDER_GROUP_MAP = {
@@ -234,9 +235,20 @@ export const useLlmConfigStore = create((set, get) => ({
     return get().models
   },
 
-  /** Get the default model id. Returns null if no models loaded from API yet. */
+  /**
+   * Get the default model id. The user-chosen default in AI Provider Settings
+   * (defaultModelId) always wins over the consumer-config / API default so
+   * new Agent blocks and imported workflows pick it up automatically.
+   */
   getDefaultModel() {
-    return get().defaultModel
+    const aiDefault = useAiProvidersStore.getState().defaultModelId
+    return aiDefault || get().defaultModel
+  },
+
+  /** Get the default provider id, same precedence as getDefaultModel(). */
+  getDefaultProvider() {
+    const aiDefault = useAiProvidersStore.getState().defaultProviderId
+    return aiDefault || get().activeProvider || ''
   },
 
   /** Check if consumer config is active (not using built-in defaults) */
@@ -267,11 +279,15 @@ export const useLlmConfigStore = create((set, get) => ({
 
 /* ── Convenience functions (non-React, callable from block definitions) ─ */
 
-/** Returns model options filtered to the active provider only. */
-export function getConfiguredModelOptions() {
+/**
+ * Returns model options, filtered by provider.
+ * @param {string} [providerOverride] — when set (e.g. the Agent block's own
+ *   "AI Provider" field), filters to that provider instead of the global active one.
+ */
+export function getConfiguredModelOptions(providerOverride) {
   const state = useLlmConfigStore.getState()
   const all = state.getModelOptions()
-  const active = state.activeProvider
+  const active = providerOverride || state.activeProvider
   if (!active) return all
   const filtered = all.filter((m) => m.provider === active)
   return filtered.length > 0 ? filtered : all
@@ -280,6 +296,11 @@ export function getConfiguredModelOptions() {
 /** Returns the default model id */
 export function getConfiguredDefaultModel() {
   return useLlmConfigStore.getState().getDefaultModel()
+}
+
+/** Returns the default provider id */
+export function getConfiguredDefaultProvider() {
+  return useLlmConfigStore.getState().getDefaultProvider()
 }
 
 /** Returns the configured temperature or fallback */

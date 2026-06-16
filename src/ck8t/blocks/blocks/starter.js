@@ -1,7 +1,8 @@
 /** Ported verbatim from sim/apps/sim/blocks/blocks/starter.ts */
 import { StartIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const StarterBlock = {
+export const StarterBlock = defineCk8tBlock({
   type: 'starter',
   name: 'Starter',
   description: 'Start workflow',
@@ -36,4 +37,4 @@ export const StarterBlock = {
     input: { type: 'json', description: 'Workflow input data' },
   },
   outputs: {},
-}
+})

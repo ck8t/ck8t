@@ -1,7 +1,8 @@
 /** Schedule trigger block — mirrors sim's schedule shape. */
 import { ScheduleIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ScheduleBlock = {
+export const ScheduleBlock = defineCk8tBlock({
   type: 'schedule',
   name: 'Schedule',
   description: 'Run workflow on a cron schedule',
@@ -24,4 +25,4 @@ export const ScheduleBlock = {
   outputs: {
     firedAt: { type: 'string', description: 'ISO timestamp of trigger fire' },
   },
-}
+})

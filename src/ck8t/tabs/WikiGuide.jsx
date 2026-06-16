@@ -484,6 +484,10 @@ export default function WikiGuide() {
               <a href="#c-ext" onClick={(e) => { e.preventDefault(); scrollTo('c-ext') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ BlockConfig template</a>
               <a href="#c-ext" onClick={(e) => { e.preventDefault(); scrollTo('c-ext') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ Graph-runner case</a>
               <a href="#c-ext" onClick={(e) => { e.preventDefault(); scrollTo('c-ext') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ All 3 build targets</a>
+              <a href="#c-ck8tblock" onClick={(e) => { e.preventDefault(); scrollTo('c-ck8tblock') }}>CK8tBlock base + progress</a>
+              <a href="#c-ck8tblock" onClick={(e) => { e.preventDefault(); scrollTo('c-ck8tblock') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ hasProgress flag</a>
+              <a href="#c-ck8tblock" onClick={(e) => { e.preventDefault(); scrollTo('c-ck8tblock') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ progress() callback</a>
+              <a href="#c-ck8tblock" onClick={(e) => { e.preventDefault(); scrollTo('c-ck8tblock') }} style={{ paddingLeft: 16, fontSize: '0.8rem', opacity: 0.7 }}>↳ Community blocks</a>
               <a href="#prov-why" onClick={(e)=>{e.preventDefault();scrollTo('prov-why')}}>Custom Providers & Browser mode</a>
               <a href="#mcp-what" onClick={(e)=>{e.preventDefault();scrollTo('mcp-what')}}>MCP — Tool integration</a>
             </div>
@@ -860,6 +864,154 @@ function runMyBlock({ values, input }) {
             <code>graph-runner.js</code>. That's the entire contract. Run <code>npm run build:all</code> to ship to all
             three targets in one command.
           </Tip>
+
+          {/* ── CK8tBlock base + progress ── */}
+          <h3 id="c-ck8tblock" style={{ marginTop: 40 }}>1.6 CK8tBlock base + progress</h3>
+          <p>
+            Every block in CK8T — built-in or community — follows the same base shape defined in{' '}
+            <code>src/ck8t/blocks/ck8t-block-base.js</code>. Think of it like a Java base class: new common capabilities
+            added to <code>CK8tBlockBase</code> are instantly available to every block that extends it.
+          </p>
+          <p>
+            The first capability built on this pattern is <strong>inline progress</strong>: a live progress bar that
+            expands at the bottom of the node card while the block runs — same indigo look as the floating overlay,
+            but embedded inside the card itself.
+          </p>
+
+          <Step num={1} title="Opt in with hasProgress">
+            Add <code>hasProgress: true</code> to your block definition. That's all the UI needs — the node card
+            automatically shows the progress footer whenever real progress data is flowing.
+            <CodeBlock language="javascript" filename="blocks/blocks/mcp.js (built-in example)">
+{`export const McpBlock = {
+  type: 'mcp',
+  name: 'MCP Tool',
+  // ...
+  hasProgress: true,   // ← opts this block into the inline progress footer
+  subBlocks: [ ... ],
+}`}
+            </CodeBlock>
+            <CodeBlock language="javascript" filename="ui/story-splitter.js (community block example)">
+{`export default {
+  type: 'story_splitter',
+  name: 'Story Splitter',
+  // ...
+  hasProgress: true,   // ← same flag, works identically in community blocks
+  run({ values, input, progress }) { ... },
+}`}
+            </CodeBlock>
+          </Step>
+
+          <Step num={2} title="Call progress() in your run()">
+            When <code>hasProgress: true</code>, the graph-runner injects a <code>progress</code> callback as the
+            fourth argument to your <code>run()</code>. Call it at key stages — the node card updates in real time.
+            <CodeBlock language="javascript" filename="ui/storybook-pdf.js — async block with stages">
+{`async run({ values, input, inputsByHandle, progress }) {
+  progress?.({ pct: 5,  step: 1, total: 3, label: 'Connecting to bridge…' })
+
+  const res = await fetch(\`\${base}/ck8t/run-block\`, { ... })
+
+  progress?.({ pct: 20, step: 2, total: 3, label: 'Generating PDF…' })
+
+  if (!res.ok) throw new Error(\`bridge error \${res.status}\`)
+
+  progress?.({ pct: 90, step: 3, total: 3, label: 'Reading result…' })
+
+  const { output } = await res.json()
+  return output
+},`}
+            </CodeBlock>
+            <Tip type="info">
+              <strong>Always use optional chaining</strong> (<code>progress?.()</code>). The callback is <code>undefined</code>{' '}
+              when <code>hasProgress</code> is <code>false</code> — optional chaining makes your block safe in both states
+              without any extra guard.
+            </Tip>
+            <table>
+              <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+              <tbody>
+                <tr><td><code>pct</code></td><td>number 0-100</td><td>Drives the progress bar fill width</td></tr>
+                <tr><td><code>step</code></td><td>number</td><td>Current step shown as "step N / total"</td></tr>
+                <tr><td><code>total</code></td><td>number</td><td>Total step count</td></tr>
+                <tr><td><code>label</code></td><td>string</td><td>Short status string next to the spinner</td></tr>
+              </tbody>
+            </table>
+          </Step>
+
+          <Step num={3} title="How the graph-runner wires it">
+            You never set up or tear down the progress store yourself. The graph-runner handles it automatically
+            for any block with <code>hasProgress: true</code>:
+            <CodeBlock language="javascript" filename="run/graph-runner.js — default community block dispatch">
+{`default: {
+  const communityRun = customBrowserBlockRunners.get(type)
+  if (communityRun) {
+    const blkCfg = getBlock(type)
+    const progressFn = blkCfg?.hasProgress
+      ? (data) => useMcpProgressStore.getState().setProgress({ nodeId: node.id, ...data })
+      : undefined
+    try {
+      return await communityRun({ values, input, inputsByHandle, outputs,
+                                  node, allNodes, subBlockValues, progress: progressFn })
+    } finally {
+      if (progressFn) useMcpProgressStore.getState().clearProgress()
+    }
+  }
+  return input
+}`}
+            </CodeBlock>
+            <Tip type="info">
+              The <code>finally</code> block guarantees progress is always cleared — even when your block throws.
+              You never need to call <code>clearProgress()</code> yourself.
+            </Tip>
+          </Step>
+
+          <Step num={4} title="defineCk8tBlock() for source-tree blocks">
+            Built-in blocks and extensions living inside the <code>src/</code> tree can import the helper to
+            ensure they always inherit any new base fields without manual updates:
+            <CodeBlock language="javascript" filename="src/ck8t/blocks/ck8t-block-base.js">
+{`export const CK8tBlockBase = {
+  type:            '',
+  name:            '',
+  description:     '',
+  longDescription: '',
+  category:        'custom',
+  bgColor:         '#334155',
+  icon:            null,
+  iconSvg:         null,  // SVG path string — community blocks can't import React icons
+  subBlocks:       [],
+  inputs:          {},
+  outputs:         {},
+  hasProgress:     false, // ← inline progress opt-in
+  singleton:       false,
+  run:             null,
+}
+
+// Merge your definition over the base — your fields win on every key.
+export function defineCk8tBlock(def) {
+  return Object.assign({}, CK8tBlockBase, def)
+}`}
+            </CodeBlock>
+            <CodeBlock language="javascript" filename="extensions/my-block.js — using defineCk8tBlock">
+{`import { defineCk8tBlock } from '../blocks/ck8t-block-base.js'
+
+export default defineCk8tBlock({
+  type:        'ext_my_block',
+  name:        'My Block',
+  category:    'custom',
+  hasProgress: true,
+  async run({ values, input, progress }) {
+    progress?.({ pct: 0, step: 1, total: 2, label: 'Starting…' })
+    const result = await doWork(input)
+    progress?.({ pct: 100, step: 2, total: 2, label: 'Done' })
+    return result
+  },
+})`}
+            </CodeBlock>
+            <Tip type="warn">
+              <strong>Community blocks distributed as separate packages</strong> (installed via the block manager,
+              loaded at runtime) cannot use <code>import</code> statements — the VS Code extension evaluates them
+              with <code>new Function()</code>. Use the plain-object pattern with <code>hasProgress: true</code>{' '}
+              directly on the export, as shown in Step 1.
+            </Tip>
+          </Step>
         </div>
 
         <div className="wiki-divider" />

@@ -26,6 +26,10 @@ import { useWorkflowStore } from './stores/workflow-store'
 import { useTabsStore, workflowTabId } from './stores/tabs-store'
 import { PlayIcon, PanelRightIcon, PanelLeftIcon, SettingsIcon } from './components/icons'
 import { BookIcon } from './tabs/WikiGuide'
+import { logUiEvent } from './audit/ui-audit-store'
+import { flushSnapshot } from './stores/snapshot'
+import { useUiStateStore } from './stores/ui-state-store'
+import McpProgressOverlay from './components/McpProgressOverlay'
 import './ck8t.css'
 
 const R_MIN = 280
@@ -54,8 +58,15 @@ export default function AgentBuilderPage() {
   const renameTab = useTabsStore((s) => s.renameTab)
   const activeTabId = useTabsStore((s) => s.activeId)
 
-  const [rOpen, setROpen] = useState(false)
-  const [rWidth, setRWidth] = useState(R_DEFAULT)
+  const rOpen      = useUiStateStore((s) => s.rOpen)
+  const rWidth     = useUiStateStore((s) => s.rWidth)
+  const runOpen    = useUiStateStore((s) => s.runOpen)
+  const dockTab    = useUiStateStore((s) => s.dockTab)
+  const setPanelState = useUiStateStore((s) => s.setPanelState)
+  const setROpen   = (v) => setPanelState({ rOpen:   typeof v === 'function' ? v(rOpen)   : v })
+  const setRWidth  = (v) => setPanelState({ rWidth:  typeof v === 'function' ? v(rWidth)  : v })
+  const setRunOpen = (v) => setPanelState({ runOpen: typeof v === 'function' ? v(runOpen) : v })
+  const setDockTab = (v) => setPanelState({ dockTab: v })
   const [rDragging, setRDragging] = useState(false)
 
   /* ── Theme toggle (extension-only) ──────────────────────────────── */
@@ -73,9 +84,7 @@ export default function AgentBuilderPage() {
   }, [isDark, isExtension])
   const toggleTheme = useCallback(() => setIsDark((d) => !d), [])
   const [rTip, setRTip] = useState(false)
-  const dragRef = useRef({ active: false, startX: 0, startW: R_DEFAULT, moved: false })
-  const [runOpen, setRunOpen] = useState(false)
-  const [dockTab, setDockTab] = useState('run')
+  const dragRef = useRef({ active: false, startX: 0, startW: rWidth, moved: false })
   const [newWorkflowOpen, setNewWorkflowOpen] = useState(false)
   const tabsInited = useRef(false)
   const runRef = useRef(null)
@@ -114,6 +123,15 @@ export default function AgentBuilderPage() {
       showToast('Add at least 2 blocks to run', 'warning')
       return
     }
+    logUiEvent('workflow.run', {
+      workflowId:     active.id,
+      name:           active.name,
+      nodeCount:      nodes.length,
+      edgeCount:      edges.length,
+      nodes,
+      edges,
+      subBlockValues,
+    })
     animateBtn('.bs-topbar-icon-run')
     setDockTab('run')
     showToast('Running workflow…', 'run')
@@ -123,14 +141,33 @@ export default function AgentBuilderPage() {
 
   const handleSave = useCallback(() => {
     if (!active) return
+    logUiEvent('workflow.save', {
+      workflowId:     active.id,
+      name:           active.name,
+      nodeCount:      nodes.length,
+      edgeCount:      edges.length,
+      nodes,
+      edges,
+      subBlockValues,
+    })
     animateBtn('.bs-topbar-icon-save')
     saveWorkflow(active.id, { nodes, edges, subBlockValues })
     syncToServer()
+    flushSnapshot()   // bypass debounce — write immediately to SQLite
     showToast('Workflow saved', 'save')
   }, [active, animateBtn, edges, nodes, saveWorkflow, showToast, subBlockValues, syncToServer])
 
   const handleExport = useCallback(() => {
     if (!active || !canExport) return
+    logUiEvent('workflow.export', {
+      workflowId:  active.id,
+      name:        active.name,
+      nodeCount:   nodes.length,
+      edgeCount:   edges.length,
+      nodes,
+      edges,
+      subBlockValues,
+    })
     animateBtn('.bs-topbar-icon-export')
     const cleanNodes = nodes.map(({ width, height, dragging, selected, positionAbsolute, ...n }) => n)
     const cleanEdges = edges.map(({ selected, ...e }) => e)
@@ -172,12 +209,16 @@ export default function AgentBuilderPage() {
 
 
 
-  // Initialize workflow tabs from workspace store on first mount
+  // Initialize workflow tabs from workspace store on first mount.
+  // Skip if a snapshot already populated tabs (panel re-open restore path).
   useEffect(() => {
     if (tabsInited.current) return
     if (workflows.length > 0) {
       tabsInited.current = true
-      initWorkflowTabs(workflows, activeWorkflowId)
+      const alreadyHasTabs = useTabsStore.getState().tabs.some((t) => t.kind === 'workflow')
+      if (!alreadyHasTabs) {
+        initWorkflowTabs(workflows, activeWorkflowId)
+      }
     }
   }, [workflows, activeWorkflowId, initWorkflowTabs])
 
@@ -185,10 +226,14 @@ export default function AgentBuilderPage() {
   // Workflows are opened on-demand by clicking in the sidebar.
   // Auto-syncing would re-open tabs the user explicitly closed.
 
-  // Hydrate from server on startup (if backend is available)
+  // Hydrate from server on startup (if backend is available).
+  // In VS Code extension mode the SQLite panel snapshot is the source of truth —
+  // loadFromServer() would overwrite the hydrated snapshot and erase imported
+  // workflows that were never synced to ck8t-server, so we skip it there.
   const serverLoaded = useRef(false)
   useEffect(() => {
     if (serverLoaded.current) return
+    if (typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension') return
     serverLoaded.current = true
     loadFromServer().catch(() => {})
   }, [loadFromServer])
@@ -526,11 +571,14 @@ export default function AgentBuilderPage() {
           onCancel={() => setNewWorkflowOpen(false)}
           onCreate={(name, teamId) => {
             const wf = createWorkflow(name, teamId)
+            logUiEvent('workflow.new', { name })
             openWorkflowTab(wf.id, wf.name)
             setNewWorkflowOpen(false)
           }}
         />
       )}
+
+      <McpProgressOverlay />
     </div>
   )
 }

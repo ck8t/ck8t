@@ -1,7 +1,8 @@
 /** Sort block — sort arrays by a field or expression. */
 import { TableIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SortBlock = {
+export const SortBlock = defineCk8tBlock({
   type: 'sort',
   name: 'Sort',
   description: 'Sort array items by field or expression',
@@ -50,4 +51,4 @@ export const SortBlock = {
     sorted: { type: 'json', description: 'Sorted array' },
     count: { type: 'number', description: 'Number of items' },
   },
-}
+})

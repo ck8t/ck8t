@@ -1,23 +1,24 @@
 /**
  * Workspace persistence service.
  *
- * Strategy (proxy-first):
- *  1. DEFAULT: proxy through ConvEngine's workspace endpoints.
- *     ConvEngine (convengine-demo) owns the database and schema.
- *  2. FALLBACK: if DIRECT_PERSISTENCE=true, use Postgres directly
- *     (or in-memory when DATABASE_URL is not set).
+ * Storage priority:
+ *  1. Postgres — when DATABASE_URL is set
+ *  2. File-based — ~/.salilvnair/ck8t/workspaces/<id>.json (default, no config needed)
+ *  3. In-memory  — last resort if disk write fails
  */
 import pg from 'pg'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { config } from '../config.js'
 import type { WorkspaceSnapshot } from '../types/index.js'
 
 const { Pool } = pg
-const useDirectPersistence = process.env.DIRECT_PERSISTENCE === 'true'
 
-// ── File-based fallback store (survives server restarts, no DB needed) ──
-const DATA_DIR = process.env.CK8T_DATA_DIR || path.join(process.cwd(), '.ck8t-data')
+/* ── File-based store (~/.salilvnair/ck8t/workspaces/) ── */
+
+const DATA_DIR = process.env.CK8T_DATA_DIR ||
+  path.join(os.homedir(), '.salilvnair', 'ck8t', 'workspaces')
 
 function wsFilePath(workspaceId: string): string {
   return path.join(DATA_DIR, `${workspaceId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`)
@@ -25,8 +26,7 @@ function wsFilePath(workspaceId: string): string {
 
 function fileLoad(workspaceId: string): WorkspaceSnapshot | null {
   try {
-    const raw = fs.readFileSync(wsFilePath(workspaceId), 'utf8')
-    return JSON.parse(raw) as WorkspaceSnapshot
+    return JSON.parse(fs.readFileSync(wsFilePath(workspaceId), 'utf8')) as WorkspaceSnapshot
   } catch {
     return null
   }
@@ -39,34 +39,7 @@ function fileSync(workspaceId: string, snapshot: WorkspaceSnapshot): void {
   } catch { /* disk unavailable — fall through to memStore */ }
 }
 
-// ── Proxy to ConvEngine (default) ──
-
-async function proxySync(workspaceId: string, snapshot: WorkspaceSnapshot): Promise<{ ok: boolean }> {
-  const url = `${config.convengineBase}/builder-studio/workspace/${encodeURIComponent(workspaceId)}/sync`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(snapshot),
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`ConvEngine workspace sync ${res.status}: ${text}`)
-  }
-  return { ok: true }
-}
-
-async function proxyLoad(workspaceId: string): Promise<WorkspaceSnapshot | null> {
-  const url = `${config.convengineBase}/builder-studio/workspace/${encodeURIComponent(workspaceId)}`
-  const res = await fetch(url)
-  if (res.status === 404) return null
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`ConvEngine workspace load ${res.status}: ${text}`)
-  }
-  return await res.json() as WorkspaceSnapshot
-}
-
-// ── Direct Postgres / in-memory (opt-in) ──
+/* ── Postgres ── */
 
 let pool: pg.Pool | null = null
 
@@ -79,28 +52,23 @@ function getPool(): pg.Pool | null {
 
 const memStore = new Map<string, WorkspaceSnapshot>()
 
-async function directSync(workspaceId: string, snapshot: WorkspaceSnapshot): Promise<{ ok: boolean }> {
-  const p = getPool()
-  if (!p) {
-    memStore.set(workspaceId, snapshot)
-    fileSync(workspaceId, snapshot)  // also persist to disk
-    return { ok: true }
-  }
+async function pgSync(workspaceId: string, snapshot: WorkspaceSnapshot): Promise<{ ok: boolean }> {
+  const p = getPool()!
   await p.query(
-    `INSERT INTO ce_bs_workspace (workspace_id, name, description)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (workspace_id) DO UPDATE SET name = $2, description = $3, updated_at = now()`,
-    [workspaceId, snapshot.activeWorkspaceId || workspaceId, '']
+    `INSERT INTO ck8t_workspace (workspace_id, name)
+     VALUES ($1, $2)
+     ON CONFLICT (workspace_id) DO UPDATE SET name = $2, updated_at = now()`,
+    [workspaceId, snapshot.activeWorkspaceId || workspaceId]
   )
   await p.query(
-    `CREATE TABLE IF NOT EXISTS ce_bs_workspace_snapshot (
-       workspace_id text PRIMARY KEY REFERENCES ce_bs_workspace(workspace_id) ON DELETE CASCADE,
+    `CREATE TABLE IF NOT EXISTS ck8t_workspace_snapshot (
+       workspace_id text PRIMARY KEY REFERENCES ck8t_workspace(workspace_id) ON DELETE CASCADE,
        data jsonb NOT NULL,
        updated_at timestamptz DEFAULT now()
      )`
-  , [])
+  )
   await p.query(
-    `INSERT INTO ce_bs_workspace_snapshot (workspace_id, data)
+    `INSERT INTO ck8t_workspace_snapshot (workspace_id, data)
      VALUES ($1, $2)
      ON CONFLICT (workspace_id) DO UPDATE SET data = $2, updated_at = now()`,
     [workspaceId, JSON.stringify(snapshot)]
@@ -108,42 +76,31 @@ async function directSync(workspaceId: string, snapshot: WorkspaceSnapshot): Pro
   return { ok: true }
 }
 
-async function directLoad(workspaceId: string): Promise<WorkspaceSnapshot | null> {
-  const p = getPool()
-  if (!p) {
-    // Try in-memory first (fastest), then disk (survives restarts)
-    return memStore.get(workspaceId) ?? fileLoad(workspaceId)
-  }
+async function pgLoad(workspaceId: string): Promise<WorkspaceSnapshot | null> {
+  const p = getPool()!
   try {
     const r = await p.query(
-      `SELECT data FROM ce_bs_workspace_snapshot WHERE workspace_id = $1`,
+      `SELECT data FROM ck8t_workspace_snapshot WHERE workspace_id = $1`,
       [workspaceId]
     )
-    if (r.rows.length === 0) return null
-    return r.rows[0].data as WorkspaceSnapshot
+    return r.rows.length ? r.rows[0].data as WorkspaceSnapshot : null
   } catch {
     return null
   }
 }
 
-// ── Public API ──
+/* ── Public API ── */
 
 export async function syncWorkspace(workspaceId: string, snapshot: WorkspaceSnapshot): Promise<{ ok: boolean }> {
-  if (useDirectPersistence) return directSync(workspaceId, snapshot)
-  try {
-    return await proxySync(workspaceId, snapshot)
-  } catch {
-    // convengine-demo not running — fall back to in-memory / Postgres directly
-    return directSync(workspaceId, snapshot)
-  }
+  const p = getPool()
+  if (p) return pgSync(workspaceId, snapshot)
+  memStore.set(workspaceId, snapshot)
+  fileSync(workspaceId, snapshot)
+  return { ok: true }
 }
 
 export async function loadWorkspace(workspaceId: string): Promise<WorkspaceSnapshot | null> {
-  if (useDirectPersistence) return directLoad(workspaceId)
-  try {
-    return await proxyLoad(workspaceId)
-  } catch {
-    // convengine-demo not running — fall back to in-memory / Postgres directly
-    return directLoad(workspaceId)
-  }
+  const p = getPool()
+  if (p) return pgLoad(workspaceId)
+  return memStore.get(workspaceId) ?? fileLoad(workspaceId)
 }

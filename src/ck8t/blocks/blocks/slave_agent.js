@@ -21,8 +21,9 @@
  */
 import { AgentIcon } from '../../components/icons'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SlaveAgentBlock = {
+export const SlaveAgentBlock = defineCk8tBlock({
   type: 'slave_agent',
   name: 'Slave Agent',
   description: 'Specialist agent dispatched by a master_agent',
@@ -131,4 +132,4 @@ export const SlaveAgentBlock = {
     confidence:          { type: 'number',  description: '0–1 confidence score' },
     needs_clarification: { type: 'boolean', description: 'True → master may trigger adaptive re-plan' },
   },
-}
+})

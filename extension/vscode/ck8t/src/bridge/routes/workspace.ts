@@ -18,8 +18,14 @@ export function workspaceRouter() {
   router.get('/ck8t/workspace/:id', (req: Request, res: Response) => {
     try {
       const snapshot = loadWorkspace(req.params.id);
-      if (!snapshot) return res.status(404).json({ error: 'Workspace not found' });
-      res.json(snapshot);
+      // Return empty-but-valid snapshot on first run — UI persists on next sync
+      res.json(snapshot ?? {
+        activeWorkspaceId: req.params.id,
+        workspaces: [],
+        agents: [],
+        skills: [],
+        workflows: [],
+      });
     } catch (err: unknown) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }

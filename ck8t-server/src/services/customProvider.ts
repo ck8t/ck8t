@@ -1,4 +1,4 @@
-/** In-memory store for custom LLM providers (no convengine-demo dependency). */
+/** In-memory store for custom LLM providers. */
 
 export interface CustomProvider {
   key: string

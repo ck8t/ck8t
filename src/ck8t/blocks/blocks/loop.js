@@ -1,7 +1,8 @@
 /** Loop container block — mirrors sim's loop block shape. */
 import { LoopIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const LoopBlock = {
+export const LoopBlock = defineCk8tBlock({
   type: 'loop',
   name: 'Loop',
   description: 'Iterate over items or repeat N times',
@@ -67,4 +68,4 @@ export const LoopBlock = {
     iterations: { type: 'number', description: 'Total iterations executed' },
     results: { type: 'array', description: 'Output of each iteration' },
   },
-}
+})

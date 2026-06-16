@@ -2,8 +2,9 @@
 import { SmtpIcon } from '../../components/icons'
 import { AuthMode, IntegrationType } from '../types'
 import { normalizeFileInput } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SmtpBlock = {
+export const SmtpBlock = defineCk8tBlock({
   type: 'smtp',
   name: 'SMTP',
   description: 'Send emails via any SMTP mail server',
@@ -116,4 +117,4 @@ export const SmtpBlock = {
     subject: { type: 'string', description: 'Email subject' },
     error: { type: 'string', description: 'Error message if failed' },
   },
-}
+})

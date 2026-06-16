@@ -1,8 +1,9 @@
 /** Ported from sim/apps/sim/blocks/blocks/postgresql.ts. */
 import { PostgresIcon } from '../../components/icons'
 import { IntegrationType } from '../types'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const PostgreSQLBlock = {
+export const PostgreSQLBlock = defineCk8tBlock({
   type: 'postgresql',
   name: 'PostgreSQL',
   description: 'Connect to PostgreSQL database',
@@ -139,4 +140,4 @@ export const PostgreSQLBlock = {
     tables: { type: 'array', description: 'Schemas (introspect)' },
     schemas: { type: 'array', description: 'Available schemas (introspect)' },
   },
-}
+})

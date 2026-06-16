@@ -152,9 +152,13 @@ export const useWorkflowStore = create()(
           }
           return { ...rest, sourceHandle: sourceHandle || e.sourceHandle, targetHandle: targetHandle || e.targetHandle }
         })
+        // Ensure every edge has a stable id — imported JSONs often omit it.
+        // Without an id, removeEdge(undefined) matches all edges and wipes them.
+        const withIds = migrated.map((e) => e.id ? e : { ...e, id: `e_${uuid()}` })
+
         // Deduplicate edges (same source+target+handles)
         const seen = new Set()
-        const deduped = migrated.filter((e) => {
+        const deduped = withIds.filter((e) => {
           const key = `${e.source}::${e.target}::${e.sourceHandle}::${e.targetHandle}`
           if (seen.has(key)) return false
           seen.add(key)
@@ -165,6 +169,7 @@ export const useWorkflowStore = create()(
           edges: deduped,
           subBlockValues: subBlockValues || {},
           selectedNodeId: null,
+          selectedNodeIds: [],
         })
       },
 
@@ -303,6 +308,7 @@ export const useWorkflowStore = create()(
 
       /** Remove a single edge by id. */
       removeEdge(id) {
+        if (!id) return  // guard: falsy id would wipe all id-less edges
         _pushSnap(get())
         set((s) => ({ edges: s.edges.filter((e) => e.id !== id) }))
       },

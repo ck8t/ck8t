@@ -22,6 +22,7 @@ import SkillEditor from './SkillEditor'
 import SettingsTab from './SettingsTab'
 import WikiGuide, { BookIcon } from './WikiGuide'
 import TeamEditor from './TeamEditor'
+import BlockManager, { ManagerIcon } from '../components/BlockManager'
 import { WorkflowsIcon, AgentsIcon, SkillsIcon, TeamsIcon, SettingsIcon, XIcon } from '../components/icons'
 
 const ICONS = {
@@ -31,6 +32,7 @@ const ICONS = {
   team: TeamsIcon,
   settings: SettingsIcon,
   wiki: BookIcon,
+  manager: ManagerIcon,
 }
 
 export default function CenterPane() {
@@ -163,6 +165,7 @@ export default function CenterPane() {
         {active?.kind === 'team' && <TeamEditor teamId={active.entityId} />}
         {active?.kind === 'settings' && <SettingsTab />}
         {active?.kind === 'wiki' && <WikiGuide />}
+        {active?.kind === 'manager' && <BlockManager />}
       </div>
     </div>
   )

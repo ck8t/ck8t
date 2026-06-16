@@ -1,7 +1,8 @@
 /** HTTP Response block — send a custom HTTP response (n8n-inspired). */
 import { ResponseIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const HttpResponseBlock = {
+export const HttpResponseBlock = defineCk8tBlock({
   type: 'http_response',
   name: 'HTTP Response',
   description: 'Return a custom HTTP response',
@@ -49,4 +50,4 @@ export const HttpResponseBlock = {
   outputs: {
     sent: { type: 'boolean', description: 'Whether the response was sent' },
   },
-}
+})

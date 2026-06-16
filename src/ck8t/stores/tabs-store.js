@@ -110,6 +110,16 @@ export const useTabsStore = create((set, get) => ({
     }))
   },
 
+  /** Focus (or open) the singleton Block Manager tab. */
+  openManager() {
+    const existing = get().tabs.find((t) => t.id === MANAGER_TAB_ID)
+    if (existing) { set({ activeId: MANAGER_TAB_ID }); return }
+    set((s) => ({
+      tabs: [...s.tabs, { id: MANAGER_TAB_ID, kind: 'manager', title: 'Block Manager' }],
+      activeId: MANAGER_TAB_ID,
+    }))
+  },
+
   /** Close all workflow tabs — leaves non-workflow tabs (settings, agent, etc.) intact. */
   closeAllWorkflowTabs() {
     set((s) => {
@@ -166,6 +176,7 @@ export const useTabsStore = create((set, get) => ({
 
 export const SETTINGS_TAB_ID = 'settings'
 export const WIKI_TAB_ID = 'wiki'
+export const MANAGER_TAB_ID = 'manager'
 export function workflowTabId(wfId) { return `workflow:${wfId}` }
 export function workflowIdFromTab(tabId) { return tabId?.startsWith('workflow:') ? tabId.slice(9) : null }
 export function agentTabId(agentId) { return `agent:${agentId}` }

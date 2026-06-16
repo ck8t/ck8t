@@ -1,7 +1,8 @@
 /** Ported from sim/apps/sim/blocks/blocks/function.ts. */
 import { CodeIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const FunctionBlock = {
+export const FunctionBlock = defineCk8tBlock({
   type: 'function',
   name: 'Function',
   description: 'Run custom logic',
@@ -52,4 +53,4 @@ export const FunctionBlock = {
     result: { type: 'json', description: 'Return value from the executed function' },
     stdout: { type: 'string', description: 'Console output and debug messages' },
   },
-}
+})

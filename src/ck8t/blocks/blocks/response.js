@@ -1,7 +1,8 @@
 /** Ported from sim/apps/sim/blocks/blocks/response.ts. */
 import { ResponseIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ResponseBlock = {
+export const ResponseBlock = defineCk8tBlock({
   type: 'response',
   name: 'Response',
   description: 'Send structured API response',
@@ -52,4 +53,4 @@ export const ResponseBlock = {
     status: { type: 'number', description: 'HTTP status code' },
     headers: { type: 'json', description: 'Response headers' },
   },
-}
+})

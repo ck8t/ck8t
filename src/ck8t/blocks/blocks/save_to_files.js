@@ -9,8 +9,9 @@
  * debugging demo runs.
  */
 import { ResponseIcon as DocumentIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SaveToFilesBlock = {
+export const SaveToFilesBlock = defineCk8tBlock({
   type: 'save_to_files',
   name: 'Save To Files',
   description: 'Write upstream output to a file (or preview it on the card).',
@@ -32,9 +33,19 @@ export const SaveToFilesBlock = {
       type: 'dropdown',
       options: [
         { label: 'JSON (pretty)', id: 'json' },
-        { label: 'Raw string', id: 'raw' },
+        { label: 'Raw string / text', id: 'raw' },
+        { label: 'PDF (base64 input)', id: 'pdf' },
+        { label: 'Binary (base64 input)', id: 'binary' },
+        { label: 'CSV', id: 'csv' },
       ],
       value: () => 'json',
+    },
+    {
+      id: 'filename',
+      title: 'Default filename',
+      type: 'short-input',
+      placeholder: 'output.json',
+      description: 'Suggested filename when the save dialog opens (extension determines format).',
     },
     {
       id: 'overwrite',
@@ -62,4 +73,4 @@ export const SaveToFilesBlock = {
     savedAt: { type: 'string', description: 'Resolved file path or null if preview-only' },
     bytes: { type: 'number', description: 'Size of the written payload' },
   },
-}
+})

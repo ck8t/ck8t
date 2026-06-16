@@ -1,7 +1,8 @@
 /** Error Handler block — catch and handle errors from upstream nodes. */
 import { ConditionalIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ErrorHandlerBlock = {
+export const ErrorHandlerBlock = defineCk8tBlock({
   type: 'error_handler',
   name: 'Error Handler',
   description: 'Catch and handle workflow errors',
@@ -52,4 +53,4 @@ export const ErrorHandlerBlock = {
     error: { type: 'json', description: 'Error details if caught' },
     retryCount: { type: 'number', description: 'Number of retries attempted' },
   },
-}
+})

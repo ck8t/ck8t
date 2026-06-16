@@ -22,6 +22,7 @@ import { Handle, Position } from 'reactflow'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useMcpStore } from '../mcp/mcp-store'
+import { useMcpProgressStore } from '../stores/mcp-progress-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { getBlock } from '../blocks/registry'
 import { getTypeColor, getCardPorts, getAllPortTypes, isTypeCompatible } from '../panel/io-registry'
@@ -30,6 +31,7 @@ import ContextMenu from '../sidenav/ContextMenu'
 import ConfirmModal from '../components/ConfirmModal'
 import InspectModal from '../components/InspectModal'
 import JsonView from '../run/JsonView'
+import { extractMediaUri } from '../run/graph-runner'
 import {
   TrashIcon,
   LinkIcon,
@@ -285,6 +287,8 @@ function WorkflowNode({ id, data, selected }) {
   const invalidInputShakeKey = useWorkflowStore((s) => s.invalidInputShakeKey)
   const lastOutput = useWorkflowStore((s) => s.lastOutputs?.[id])
   const resizeNodeStore = useWorkflowStore((s) => s.resizeNode)
+  // Per-node progress: only non-null for the node that is currently streaming progress
+  const nodeProgress = useMcpProgressStore((s) => s.active?.nodeId === id ? s.active : null)
   const fitNodeStore = useWorkflowStore((s) => s.fitNode)
   // Subscribe to active LLM provider so model comboboxes on card re-render when provider changes
   useLlmConfigStore((s) => s.activeProvider)
@@ -686,18 +690,20 @@ function WorkflowNode({ id, data, selected }) {
           <div className="bs-node-body">
             {previewRows.map((row) => {
               if (row.sb.type === 'json-preview') {
-                let previewValue = lastOutput
-                // Only treat as JSON if it IS an object/array — strings stay strings.
-                const isJsonOutput = lastOutput !== null && lastOutput !== undefined && typeof lastOutput === 'object'
+                const media = lastOutput != null ? extractMediaUri(lastOutput) : null
                 return (
                   <div key={row.id} className="bs-node-jsonpreview" onClick={(e) => { e.stopPropagation(); selectNode(id) }}>
                     <div className="bs-node-jsonpreview-head">{row.label}</div>
                     <div className="bs-node-jsonpreview-body">
                       {lastOutput == null
                         ? <span className="bs-node-jsonpreview-empty">No run yet.</span>
-                        : isJsonOutput
-                          ? <JsonView value={previewValue} collapsible defaultExpanded={2} />
-                          : <pre className="bs-node-jsonpreview-text">{String(previewValue)}</pre>}
+                        : media
+                          ? media.mimeType === 'application/pdf'
+                            ? <embed src={media.dataUri} type="application/pdf" style={{ width: '100%', minHeight: 300, borderRadius: 4 }} />
+                            : <img src={media.dataUri} alt="output" style={{ maxWidth: '100%', borderRadius: 4, display: 'block' }} />
+                          : typeof lastOutput === 'object'
+                            ? <JsonView value={lastOutput} collapsible defaultExpanded={2} />
+                            : <pre className="bs-node-jsonpreview-text">{String(lastOutput)}</pre>}
                     </div>
                   </div>
                 )
@@ -764,6 +770,46 @@ function WorkflowNode({ id, data, selected }) {
         {/* ── Audio Input recorder inline on card ── */}
         {data.blockType === 'audio_input' && !isDisabled && (
           <AudioRecorderInline nodeId={id} values={values} setSubBlockValue={setSubBlockValue} />
+        )}
+
+        {/* ── Inline block progress — shown for blocks with hasProgress: true ──
+            Displayed only when real progress data is flowing (nodeProgress set).
+            Community blocks call progress() in run(); MCP blocks receive tqdm
+            events via mcpProgress message from the extension/server. ── */}
+        {cfg?.hasProgress && nodeProgress && (
+          <div className="bs-node-progress">
+            <div className="bs-node-progress-header">
+              <span className="bs-node-progress-spinner" />
+              {nodeProgress ? (
+                <>
+                  <span className="bs-node-progress-label">
+                    {nodeProgress.serverName}
+                    {nodeProgress.toolName && (
+                      <span className="bs-node-progress-tool"> · {nodeProgress.toolName}</span>
+                    )}
+                  </span>
+                  <span className="bs-node-progress-pct">{nodeProgress.pct ?? 0}%</span>
+                </>
+              ) : (
+                <span className="bs-node-progress-label">Running…</span>
+              )}
+            </div>
+            {nodeProgress && (
+              <>
+                <div className="bs-node-progress-track">
+                  <div
+                    className="bs-node-progress-fill"
+                    style={{ width: `${nodeProgress.pct ?? 0}%` }}
+                  />
+                </div>
+                {nodeProgress.step !== undefined && (
+                  <div className="bs-node-progress-steps">
+                    step {nodeProgress.step} / {nodeProgress.total}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* ── Output port strip (ComfyUI-style) — single-output blocks ── */}
@@ -1013,7 +1059,7 @@ function renderInlineEditor(sb, value, onChange, ctx = {}) {
 
     case 'dropdown':
     case 'combobox': {
-      const options = typeof sb.options === 'function' ? safeCall(sb.options) : (sb.options || [])
+      const options = typeof sb.options === 'function' ? safeCall(sb.options, ctx.values) : (sb.options || [])
       return (
         <NodeDropdown
           value={value ?? ''}
@@ -1405,8 +1451,8 @@ function safeJsonArray(s) {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
 }
 
-function safeCall(fn) {
-  try { return fn() } catch { return [] }
+function safeCall(fn, ...args) {
+  try { return fn(...args) } catch { return [] }
 }
 
 function formatPreview(value) {

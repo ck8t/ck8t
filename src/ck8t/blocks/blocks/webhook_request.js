@@ -1,7 +1,8 @@
 /** Webhook trigger block — mirrors sim's webhook_request shape. */
 import { WebhookIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const WebhookRequestBlock = {
+export const WebhookRequestBlock = defineCk8tBlock({
   type: 'webhook_request',
   name: 'Webhook',
   description: 'Trigger workflow from an incoming webhook',
@@ -36,4 +37,4 @@ export const WebhookRequestBlock = {
     headers: { type: 'json', description: 'Request headers' },
     query: { type: 'json', description: 'Query parameters' },
   },
-}
+})

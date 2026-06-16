@@ -1,7 +1,8 @@
 /** Table block — mirrors sim's table shape for structured data I/O. */
 import { TableIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const TableBlock = {
+export const TableBlock = defineCk8tBlock({
   type: 'table',
   name: 'Table',
   description: 'Read/write structured data',
@@ -37,4 +38,4 @@ export const TableBlock = {
     rows: { type: 'array', description: 'Matching rows' },
     count: { type: 'number', description: 'Affected row count' },
   },
-}
+})

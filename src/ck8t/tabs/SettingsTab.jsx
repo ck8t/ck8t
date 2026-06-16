@@ -5,16 +5,24 @@
  * driven by `SHORTCUTS` so adding a new binding in Canvas.jsx /
  * AgentBuilderPage.jsx only needs a corresponding row here.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { SettingsIcon, KeyboardIcon, McpIcon } from '../components/icons'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import { createPortal } from 'react-dom'
+import { Highlight, themes } from 'prism-react-renderer'
+import { SettingsIcon, KeyboardIcon, McpIcon, SearchIcon, XIcon, TrashIcon } from '../components/icons'
 import { changeRuntimeProvider, fetchAvailableProviders, fetchCustomProviders, saveCustomProvider, deleteCustomProvider, refreshCustomProviderModels } from '../api/llm-provider-client'
 import McpServersPanel from './McpServersPanel'
+import AiProvidersPanel from './AiProvidersPanel'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useBrowserProvidersStore } from '../api/browser-providers-store'
 import { detectServer } from '../api/server-status'
 import StyledSelect from '../components/StyledSelect'
+import {
+  AUDIT_EVENT_DEFS, MODULE_ORDER,
+  getAuditConfig, setAuditEventEnabled, isAuditEventEnabled, resetAuditConfig,
+  getUiAuditLog, clearUiAuditLog, subscribeUiAudit,
+} from '../audit/ui-audit-store'
 
 const MOD = /Mac|iPhone|iPad/.test(typeof navigator !== 'undefined' ? navigator.platform : '') ? '⌘' : 'Ctrl'
 
@@ -161,17 +169,30 @@ const CheckPathIcon = (p) => (
   </svg>
 )
 
+const AuditIcon = (p) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+  </svg>
+)
+
+const DevToolsIcon = (p) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+  </svg>
+)
+
 const SETTINGS_TABS = [
   { id: 'shortcuts', label: 'Keyboard Shortcuts', Icon: KeyboardIcon },
   { id: 'mcp', label: 'MCP Servers', Icon: McpIcon },
   { id: 'tips', label: 'Tips & Tricks', Icon: TipsIcon },
   { id: 'llm', label: 'LLM Provider Configuration', Icon: LlmIcon },
+  { id: 'audit', label: 'AI Audit', Icon: AuditIcon },
   { id: 'appconfig', label: 'App Config', Icon: AppConfigIcon, extensionOnly: true },
+  { id: 'devtools', label: 'Developer Tools', Icon: DevToolsIcon, extensionOnly: true },
 ]
 
 export default function SettingsTab() {
   const [activeSection, setActiveSection] = useState('shortcuts')
-  const [providerRefreshKey, setProviderRefreshKey] = useState(0)
   const isExtension = typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension'
   const visibleTabs = SETTINGS_TABS.filter(t => !t.extensionOnly || isExtension)
 
@@ -200,13 +221,10 @@ export default function SettingsTab() {
         {activeSection === 'shortcuts' && <KeyboardShortcutsSection />}
         {activeSection === 'mcp' && <McpServersPanel />}
         {activeSection === 'tips' && <TipsAndTricksSection />}
-        {activeSection === 'llm' && (
-          <>
-            <LlmConfigPanel refreshKey={providerRefreshKey} />
-            <CustomProviderPanel onChanged={() => setProviderRefreshKey((k) => k + 1)} />
-          </>
-        )}
+        {activeSection === 'llm' && <AiProvidersPanel />}
         {activeSection === 'appconfig' && <AppConfigPanel />}
+        {activeSection === 'audit' && <AiAuditSection />}
+        {activeSection === 'devtools' && <DevToolsSection />}
       </div>
     </div>
   )
@@ -826,6 +844,24 @@ function extractHostFromUrl(url, type) {
   try { return new URL(url).origin } catch { return '' }
 }
 
+const PROVIDER_DEFAULT_HOSTS = {
+  openai:    'https://api.openai.com',
+  anthropic: 'https://api.anthropic.com',
+  gemini:    'https://generativelanguage.googleapis.com',
+  grok:      'https://api.x.ai',
+  mistral:   'https://api.mistral.ai',
+  deepseek:  'https://api.deepseek.com',
+  qwen:      'https://dashscope.aliyuncs.com',
+  lmstudio:  'http://127.0.0.1:1234',
+  ollama:    'http://localhost:11434',
+}
+
+function defaultsForType(type) {
+  const host = PROVIDER_DEFAULT_HOSTS[type] || ''
+  const derived = deriveUrlsFromHost(host, type)
+  return { host, chatUrl: derived.chatUrl || '', modelsUrl: derived.modelsUrl || '' }
+}
+
 const BLANK_FORM = { name: '', type: 'openai', host: '', chatUrl: '', modelsUrl: '', apiKey: '', headers: '' }
 
 function CustomProviderPanel({ onChanged } = {}) {
@@ -846,7 +882,7 @@ function CustomProviderPanel({ onChanged } = {}) {
 
   const openAdd = useCallback(() => {
     setEditingKey(null)
-    setForm(BLANK_FORM)
+    setForm({ ...BLANK_FORM, ...defaultsForType('openai') })
     setFormError('')
     setShowForm(true)
   }, [])
@@ -1009,7 +1045,20 @@ function CustomProviderPanel({ onChanged } = {}) {
               <StyledSelect
                 value={form.type}
                 options={PROVIDER_TYPE_OPTIONS}
-                onChange={(id) => setForm((f) => ({ ...f, type: id, ...deriveUrlsFromHost(f.host, id) }))}
+                onChange={(id) => setForm((f) => {
+                  const oldD = defaultsForType(f.type)
+                  const newD = defaultsForType(id)
+                  // Only replace a field if it's empty or still sitting at the old type's default
+                  // (i.e. user hasn't manually customised it). If the user cleared it, keep it cleared.
+                  const wasDefault = (val, def) => !val || val === def
+                  return {
+                    ...f,
+                    type:      id,
+                    host:      wasDefault(f.host,      oldD.host)      ? newD.host      : f.host,
+                    chatUrl:   wasDefault(f.chatUrl,   oldD.chatUrl)   ? newD.chatUrl   : f.chatUrl,
+                    modelsUrl: wasDefault(f.modelsUrl, oldD.modelsUrl) ? newD.modelsUrl : f.modelsUrl,
+                  }
+                })}
               />
             </label>
             <label className="bs-custom-provider-label bs-span2">
@@ -1165,23 +1214,44 @@ function AppConfigPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
+  const [auditMax, setAuditMax] = useState('')
+  const [auditSaving, setAuditSaving] = useState(false)
+  const [auditSaved, setAuditSaved] = useState(false)
+
+  const BASE = (
+    (typeof globalThis !== 'undefined' && globalThis.__CK8T_BRIDGE_BASE__) ||
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CONVENGINE_BASE) ||
+    ''
+  ).replace(/\/$/, '')
 
   useEffect(() => {
-    const BASE = (
-      (typeof globalThis !== 'undefined' && globalThis.__CK8T_BRIDGE_BASE__) ||
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CONVENGINE_BASE) ||
-      ''
-    ).replace(/\/$/, '')
     fetch(`${BASE}/ck8t/app-config`)
       .then(r => r.json())
-      .then(d => { setConfig(d); setLoading(false) })
+      .then(d => { setConfig(d); setAuditMax(String(d.auditMaxEntries ?? 200)); setLoading(false) })
       .catch(e => { setError(e.message || 'Failed to load app config'); setLoading(false) })
-  }, [])
+  }, [BASE])
 
   const copy = (text, key) => {
     navigator.clipboard?.writeText(text)
     setCopied(key)
     setTimeout(() => setCopied(''), 2000)
+  }
+
+  const saveAuditMax = async () => {
+    const n = parseInt(auditMax, 10)
+    if (!n || n < 10) return
+    setAuditSaving(true)
+    try {
+      await fetch(`${BASE}/ck8t/app-config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auditMaxEntries: n }),
+      })
+      setConfig((c) => ({ ...c, auditMaxEntries: n }))
+      setAuditSaved(true)
+      setTimeout(() => setAuditSaved(false), 2000)
+    } catch {}
+    setAuditSaving(false)
   }
 
   return (
@@ -1214,7 +1284,7 @@ function AppConfigPanel() {
                 </button>
               </div>
               <div className="bs-appconfig-card-hint">
-                Stores workspaces, MCP server configs, and deployments.
+                Stores workspaces, MCP server configs, audit log, and deployments.
               </div>
             </div>
           </div>
@@ -1240,8 +1310,1057 @@ function AppConfigPanel() {
               </div>
             </div>
           </div>
+
+          {/* Audit max entries */}
+          <div className="bs-appconfig-card">
+            <div className="bs-appconfig-card-icon">
+              <AuditIcon style={{ width: 20, height: 20 }} />
+            </div>
+            <div className="bs-appconfig-card-body">
+              <div className="bs-appconfig-card-label">AI Audit Max Entries</div>
+              <div className="bs-appconfig-path-row" style={{ gap: 8 }}>
+                <input
+                  type="number"
+                  min="10"
+                  max="5000"
+                  step="50"
+                  className="bs-custom-provider-input"
+                  style={{ width: 100 }}
+                  value={auditMax}
+                  onChange={(e) => setAuditMax(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveAuditMax()}
+                />
+                <button
+                  className="bs-btn-sm bs-btn-success"
+                  onClick={saveAuditMax}
+                  disabled={auditSaving}
+                >
+                  {auditSaved ? 'Saved!' : auditSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              <div className="bs-appconfig-card-hint">
+                Maximum LLM audit entries to keep in SQLite (10–5000). Oldest entries are dropped when the limit is reached.
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
   )
 }
+
+/* ── AI Audit Section ─────────────────────────────────────────────────── */
+
+const AUDIT_DETAIL_TABS = ['System Prompt', 'User Prompt', 'Request', 'Response', 'Full Entry']
+
+// Stage → color mapping for AI audit badges
+function stageColor(stage) {
+  if (!stage) return '#818cf8'
+  const s = stage.toLowerCase()
+  if (s.includes('agent')) return '#818cf8'
+  if (s.includes('llm'))   return '#a78bfa'
+  if (s.includes('skill')) return '#34d399'
+  return '#818cf8'
+}
+
+function AuditEntryDetail({ entry, onBack }) {
+  const [detailTab, setDetailTab] = useState('System Prompt')
+  const [copied, setCopied] = useState(false)
+
+  const copyAll = useCallback(() => {
+    navigator.clipboard.writeText(safeJsonStr(entry))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
+      .catch(() => {})
+  }, [entry])
+
+  function renderContent() {
+    switch (detailTab) {
+      case 'System Prompt': return <AuditPre value={entry.systemPrompt || '(none)'} />
+      case 'User Prompt':   return <AuditPre value={entry.userPrompt   || '(none)'} />
+      case 'Request':       return <AuditPre value={safeJsonStr(entry.request)} isJson />
+      case 'Response':      return <AuditPre value={safeJsonStr(entry.response)} isJson />
+      case 'Full Entry':    return <AuditPre value={safeJsonStr(entry)} isJson />
+      default: return null
+    }
+  }
+
+  const color = stageColor(entry.stage)
+  const hasError = !!entry.error
+
+  return (
+    <div className="bs-audit2-detail-panel">
+      {/* Header */}
+      <div className="bs-audit2-detail-header">
+        <button className="bs-audit2-back-btn" onClick={onBack}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
+        </button>
+        <span className="bs-audit2-stage-badge" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 25%, transparent)` }}>
+          {entry.stage?.replace('ck8t.', '')}
+        </span>
+        <span className="bs-audit2-model-text">{entry.model || '—'}</span>
+        <span className="bs-audit2-ms-text" style={{ color: '#f59e0b' }}>{entry.durationMs != null ? `${entry.durationMs}ms` : '—'}</span>
+        <span className="bs-audit2-ts-text">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+        <button className={`bs-audit2-copy-btn ${copied ? 'is-copied' : ''}`} onClick={copyAll}>
+          {copied
+            ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          }
+          {copied ? 'Copied!' : 'Copy All'}
+        </button>
+      </div>
+
+      {/* Error banner */}
+      {hasError && (
+        <div className="bs-audit2-error-banner">{entry.error}</div>
+      )}
+
+      {/* Tab bar */}
+      <div className="bs-audit2-tab-bar">
+        {AUDIT_DETAIL_TABS.map(t => (
+          <button key={t} className={`bs-audit2-tab ${detailTab === t ? 'is-active' : ''}`}
+            style={detailTab === t ? { color, borderBottomColor: color } : {}}
+            onClick={() => setDetailTab(t)}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="bs-audit2-detail-body">
+        {renderContent()}
+      </div>
+    </div>
+  )
+}
+
+function AuditPre({ value, isJson }) {
+  const code = isJson ? value : value
+  if (isJson) {
+    return (
+      <Highlight code={code} language="json" theme={themes.vsDark}>
+        {({ className, style, tokens, getLineProps, getTokenProps }) => (
+          <pre className="bs-audit2-pre bs-audit2-pre-hl" style={{ ...style, background: 'transparent' }}>
+            {tokens.map((line, i) => (
+              <div key={i} {...getLineProps({ line })}>
+                {line.map((token, key) => (
+                  <span key={key} {...getTokenProps({ token })} />
+                ))}
+              </div>
+            ))}
+          </pre>
+        )}
+      </Highlight>
+    )
+  }
+  return <pre className="bs-audit2-pre">{value}</pre>
+}
+
+function AiAuditSection() {
+  const [entries, setEntries] = useState([])
+  const [stats, setStats] = useState(null)
+  const [selected, setSelected] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [filter, setFilter] = useState('')
+  const [clearConfirm, setClearConfirm] = useState(false)
+  const base = typeof window !== 'undefined' ? (window.__CK8T_BRIDGE_BASE__ || '') : ''
+
+  const load = useCallback(async () => {
+    if (!base) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${base}/ck8t/audit`)
+      if (r.ok) {
+        const data = await r.json()
+        setEntries(data.entries || [])
+        setStats(data.stats || null)
+      }
+    } catch {}
+    finally { setLoading(false) }
+  }, [base])
+
+  const clear = useCallback(async () => {
+    if (!base) return
+    try {
+      await fetch(`${base}/ck8t/audit`, { method: 'DELETE' })
+      setEntries([]); setStats(null); setSelected(null); setClearConfirm(false)
+    } catch {}
+  }, [base])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = filter
+    ? entries.filter((e) => [e.model, e.stage, e.error, e.systemPrompt, e.userPrompt].join(' ').toLowerCase().includes(filter.toLowerCase()))
+    : entries
+
+  if (selected) {
+    return (
+      <div className="bs-settings-pane" style={{ padding: 0 }}>
+        <AuditEntryDetail entry={selected} onBack={() => setSelected(null)} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="bs-settings-pane bs-audit-pane">
+      {/* Section head */}
+      <div className="bs-settings-section-head">
+        <AuditIcon className="bs-ico-sm" />
+        <h3 className="bs-settings-h3">AI Audit</h3>
+        {stats && (
+          <span className="bs-audit2-count-chip">{stats.total} calls</span>
+        )}
+        {stats?.errors > 0 && (
+          <span className="bs-audit2-count-chip" style={{ color: '#f87171', background: 'rgba(239,68,68,0.1)', borderColor: 'rgba(239,68,68,0.2)' }}>{stats.errors} errors</span>
+        )}
+      </div>
+      <p className="bs-settings-sub">Every LLM call through the bridge is recorded here. Data is session-scoped — cleared when the extension restarts.</p>
+
+      {/* Toolbar */}
+      <div className="bs-audit2-toolbar">
+        <input className="bs-audit2-search" placeholder="Filter by model, stage, prompt…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <button className="bs-audit2-btn" onClick={load} disabled={loading}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+        {entries.length > 0 && (
+          <button className="bs-audit2-btn is-danger" onClick={() => setClearConfirm(true)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg>
+            Clear All
+          </button>
+        )}
+      </div>
+
+      {!base && <div className="bs-audit-empty">AI Audit is only available in the VS Code extension.</div>}
+      {base && filtered.length === 0 && !loading && (
+        <div className="bs-audit-empty">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={{ opacity: 0.3, marginBottom: 8 }}><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+          <div>No LLM calls recorded yet.</div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>Run a workflow with an Agent block to start auditing.</div>
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <div className="bs-audit2-table-wrap">
+          <table className="bs-audit2-table">
+            <thead>
+              <tr>
+                {['Stage', 'Model', 'Duration', 'Status', 'Time', ''].map(h => (
+                  <th key={h} className="bs-audit2-th">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e, i) => {
+                const color = stageColor(e.stage)
+                const hasError = !!e.error
+                return (
+                  <tr key={e.id || i} className="bs-audit2-tr" onClick={() => setSelected(e)}>
+                    <td className="bs-audit2-td">
+                      <span className="bs-audit2-stage-badge" style={{ color, background: `color-mix(in srgb, ${color} 12%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 22%, transparent)` }}>
+                        {e.stage?.replace('ck8t.', '') || 'agent'}
+                      </span>
+                    </td>
+                    <td className="bs-audit2-td bs-audit2-model">{e.model || '—'}</td>
+                    <td className="bs-audit2-td" style={{ color: '#f59e0b', fontFamily: 'monospace', fontSize: 11 }}>
+                      {e.durationMs != null ? `${e.durationMs}ms` : '—'}
+                    </td>
+                    <td className="bs-audit2-td">
+                      <span className={`bs-audit2-status-chip ${hasError ? 'is-err' : 'is-ok'}`}>
+                        {hasError ? 'Error' : 'OK'}
+                      </span>
+                    </td>
+                    <td className="bs-audit2-td bs-audit2-ts">{new Date(e.timestamp).toLocaleTimeString()}</td>
+                    <td className="bs-audit2-td" onClick={ev => ev.stopPropagation()}>
+                      <button className="bs-audit2-row-copy" title="Copy entry"
+                        onClick={() => navigator.clipboard.writeText(safeJsonStr(e)).catch(() => {})}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Clear confirm */}
+      {clearConfirm && (
+        <div className="bs-confirm-overlay">
+          <div className="bs-confirm-dialog" style={{ borderColor: 'rgba(239,68,68,0.4)' }}>
+            <p style={{ color: '#f87171', fontWeight: 600, fontSize: 13 }}>Clear all {entries.length} audit records?</p>
+            <p style={{ color: '#64748b', fontSize: 11.5, marginTop: 6 }}>This will permanently delete the entire AI audit log and cannot be undone.</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+              <button className="bs-confirm-cancel" onClick={() => setClearConfirm(false)}>Cancel</button>
+              <button className="bs-confirm-danger" onClick={clear}>Clear All</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ── Developer Tools Section ──────────────────────────────────────────── */
+
+const DEV_TABS = ['Memory Footprint', 'Debug Snapshot', 'Audit Log', 'Audit Config', 'DB Explorer']
+
+function DevToolsSection() {
+  const [activeTab, setActiveTab] = useState('Memory Footprint')
+  return (
+    <div className="bs-settings-pane bs-devtools-pane">
+      <div className="bs-settings-section-head">
+        <DevToolsIcon className="bs-ico-sm" />
+        <h3 className="bs-settings-h3">Developer Tools</h3>
+      </div>
+      <div className="bs-devtools-tabs">
+        {DEV_TABS.map((t) => (
+          <button key={t} className={`bs-devtools-tab ${activeTab === t ? 'is-active' : ''}`} onClick={() => setActiveTab(t)}>{t}</button>
+        ))}
+      </div>
+      <div className="bs-devtools-content">
+        {activeTab === 'Memory Footprint' && <MemoryFootprintTab />}
+        {activeTab === 'Debug Snapshot'   && <DebugSnapshotTab />}
+        {activeTab === 'Audit Log'        && <UiAuditLogTab />}
+        {activeTab === 'Audit Config'     && <UiAuditConfigTab />}
+        {activeTab === 'DB Explorer'      && <DbExplorerTab />}
+      </div>
+    </div>
+  )
+}
+
+function MemoryFootprintTab() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const base = typeof window !== 'undefined' ? (window.__CK8T_BRIDGE_BASE__ || '') : ''
+
+  const load = useCallback(async () => {
+    if (!base) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${base}/ck8t/devtools/memory`)
+      if (r.ok) setData(await r.json())
+    } catch {}
+    finally { setLoading(false) }
+  }, [base])
+
+  useEffect(() => { load() }, [load])
+
+  if (!base) return <div className="bs-devtools-empty">Memory Footprint is only available in the VS Code extension.</div>
+  if (loading) return <div className="bs-devtools-empty">Loading…</div>
+  if (!data) return <div className="bs-devtools-empty">Click Refresh to load memory stats.</div>
+
+  const heapPct = data.heapTotal ? Math.round((data.heapUsed / data.heapTotal) * 100) : 0
+  const fmtMb = (b) => b != null ? `${(b / 1024 / 1024).toFixed(1)} MB` : '—'
+  const fmtUptime = (s) => { const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return `${h}h ${m}m` }
+
+  return (
+    <div className="bs-devtools-memory">
+      <div className="bs-devtools-toolbar">
+        <button className="bs-btn-ghost bs-btn-sm" onClick={load}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Refresh
+        </button>
+      </div>
+      <div className="bs-devtools-metric-grid">
+        {[
+          { label: 'Node.js Version', value: data.nodeVersion,              color: '#10b981' },
+          { label: 'Process ID',      value: String(data.pid),              color: '#06b6d4' },
+          { label: 'Uptime',          value: fmtUptime(data.uptimeSeconds), color: '#8b5cf6' },
+          { label: 'Heap Used',       value: fmtMb(data.heapUsed),          color: '#f59e0b', bar: heapPct },
+          { label: 'Heap Total',      value: fmtMb(data.heapTotal),         color: '#6366f1' },
+          { label: 'RSS',             value: fmtMb(data.rss),               color: '#ec4899' },
+          { label: 'External',        value: fmtMb(data.external),          color: '#14b8a6' },
+        ].map(({ label, value, color, bar }) => (
+          <div key={label} className="bs-devtools-metric-card" style={{ borderColor: `color-mix(in srgb, ${color} 20%, transparent)`, background: `color-mix(in srgb, ${color} 4%, var(--bs-surface, #1e2026))` }}>
+            <div className="bs-devtools-metric-label" style={{ color: `color-mix(in srgb, ${color} 70%, #94a3b8)` }}>{label}</div>
+            {bar != null && (
+              <div className="bs-devtools-bar-track">
+                <div className="bs-devtools-bar-fill" style={{ width: `${Math.min(bar, 100)}%`, background: bar >= 80 ? '#ef4444' : bar >= 60 ? '#f59e0b' : color }} />
+              </div>
+            )}
+            <div className="bs-devtools-metric-value" style={{ color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DebugSnapshotTab() {
+  const [snap, setSnap] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const base = typeof window !== 'undefined' ? (window.__CK8T_BRIDGE_BASE__ || '') : ''
+
+  const generate = useCallback(async () => {
+    if (!base) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${base}/ck8t/devtools/snapshot`)
+      if (r.ok) setSnap(await r.json())
+    } catch {}
+    finally { setLoading(false) }
+  }, [base])
+
+  useEffect(() => { generate() }, [generate])
+
+  const copySnap = useCallback(() => {
+    if (!snap) return
+    navigator.clipboard.writeText(JSON.stringify(snap, null, 2))
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
+      .catch(() => {})
+  }, [snap])
+
+  const download = useCallback(() => {
+    if (!snap) return
+    const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `ck8t-snapshot-${Date.now()}.json`; a.click()
+    URL.revokeObjectURL(url)
+  }, [snap])
+
+  if (!base) return <div className="bs-devtools-empty">Debug Snapshot is only available in the VS Code extension.</div>
+
+  return (
+    <div className="bs-devtools-snapshot">
+      <div className="bs-devtools-toolbar">
+        <button className="bs-btn-ghost bs-btn-sm" onClick={generate} disabled={loading}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          {loading ? 'Generating…' : 'Regenerate'}
+        </button>
+        {snap && (
+          <>
+            <button className={`bs-btn-ghost bs-btn-sm ${copied ? 'is-copied' : ''}`} onClick={copySnap}>
+              {copied
+                ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              }
+              {copied ? 'Copied!' : 'Copy JSON'}
+            </button>
+            <button className="bs-btn-ghost bs-btn-sm" onClick={download}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+          </>
+        )}
+      </div>
+      {snap && (
+        <div className="bs-devtools-snapshot-grid">
+          {[
+            { label: 'Generated',    value: new Date(snap.generatedAt).toLocaleString(),                                                              color: '#6366f1' },
+            { label: 'Node.js',      value: snap.extension?.nodeVersion || '—',                                                                       color: '#10b981' },
+            { label: 'PID',          value: String(snap.extension?.pid || '—'),                                                                       color: '#06b6d4' },
+            { label: 'Heap Used',    value: snap.memory?.heapUsed != null ? `${(snap.memory.heapUsed / 1024 / 1024).toFixed(1)} MB` : '—',           color: '#f59e0b' },
+            { label: 'Audit Entries',value: String(snap.audit?.total ?? '—'),                                                                         color: '#a855f7' },
+            { label: 'Audit Errors', value: String(snap.audit?.errors ?? '—'), color: snap.audit?.errors > 0 ? '#ef4444' : '#94a3b8' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="bs-devtools-snap-card" style={{ borderColor: `color-mix(in srgb, ${color} 20%, transparent)`, background: `color-mix(in srgb, ${color} 4%, rgba(0,0,0,0.3))` }}>
+              <div className="bs-devtools-snap-label">{label}</div>
+              <div className="bs-devtools-snap-value" style={{ color }}>{value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {snap && (
+        <Highlight code={JSON.stringify(snap, null, 2)} language="json" theme={themes.vsDark}>
+          {({ style, tokens, getLineProps, getTokenProps }) => (
+            <pre className="bs-devtools-snapshot-json-hl" style={{ ...style, background: 'rgba(15,17,26,0.85)', border: '1px solid rgba(99,102,241,0.15)' }}>
+              {tokens.map((line, i) => (
+                <div key={i} {...getLineProps({ line })}>
+                  <span className="bs-snap-lineno">{i + 1}</span>
+                  {line.map((token, key) => (
+                    <span key={key} {...getTokenProps({ token })} />
+                  ))}
+                </div>
+              ))}
+            </pre>
+          )}
+        </Highlight>
+      )}
+    </div>
+  )
+}
+
+/* ── UI Audit Log Tab ─────────────────────────────────────────────────── */
+
+function _auditActionColor(action) {
+  switch (action) {
+    case 'create': return '#4ade80'
+    case 'delete': return '#f87171'
+    case 'update': return '#fbbf24'
+    case 'toggle': return '#60a5fa'
+    case 'click':  return '#94a3b8'
+    case 'close':  return '#fb923c'
+    default:       return '#94a3b8'
+  }
+}
+
+function _AuditPayloadBlock({ label, value, color }) {
+  if (!value) return null
+  let display = value
+  const trimmed = typeof value === 'string' ? value.trim() : JSON.stringify(value, null, 2)
+  const isJson = trimmed.startsWith('{') || trimmed.startsWith('[')
+  if (isJson) { try { display = JSON.stringify(typeof value === 'string' ? JSON.parse(value) : value, null, 2) } catch { display = trimmed } }
+  else { display = trimmed }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '2px 6px', borderRadius: 4, alignSelf: 'flex-start', color, background: `color-mix(in srgb, ${color} 10%, transparent)` }}>
+        {label}
+      </span>
+      <div style={{ borderRadius: 8, overflow: 'hidden', border: `1px solid color-mix(in srgb, ${color} 15%, transparent)` }}>
+        {isJson ? (
+          <Highlight code={display.slice(0, 6000)} language="json" theme={themes.vsDark}>
+            {({ style, tokens, getLineProps, getTokenProps }) => (
+              <pre style={{ ...style, margin: 0, padding: '10px 12px', fontSize: 10.5, lineHeight: 1.6, overflowX: 'auto', background: 'rgba(10,12,20,0.7)' }}>
+                {tokens.map((line, i) => (
+                  <div key={i} {...getLineProps({ line })}>
+                    {line.map((token, key) => <span key={key} {...getTokenProps({ token })} />)}
+                  </div>
+                ))}
+              </pre>
+            )}
+          </Highlight>
+        ) : (
+          <pre style={{ margin: 0, padding: '10px 12px', fontSize: 10.5, lineHeight: 1.6, fontFamily: 'monospace', color: 'var(--bs-text-primary, #e2e8f0)', background: 'rgba(10,12,20,0.7)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {display.slice(0, 6000)}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const _AUDIT_DETAIL_TABS = [
+  { id: 'summary',  label: 'Summary'   },
+  { id: 'metadata', label: 'Metadata'  },
+  { id: 'full',     label: 'Full JSON' },
+]
+
+function _AuditEntryDetail({ entry, onBack }) {
+  const [activeTab, setActiveTab] = useState('summary')
+  const color = entry.color || '#818cf8'
+  const actionColor = _auditActionColor(entry.action)
+
+  const fullJson = JSON.stringify({
+    id:          entry.id,
+    eventId:     entry.eventId,
+    module:      entry.module,
+    button:      entry.button,
+    action:      entry.action,
+    description: entry.description,
+    timestamp:   entry.timestamp,
+    metadata:    entry.metadata,
+  }, null, 2)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'var(--bs-surface, #1e2026)', flexShrink: 0 }}>
+        <button type="button" onClick={onBack}
+          style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 6, border: 'none', cursor: 'pointer', background: 'rgba(255,255,255,0.06)', color: 'var(--bs-text-muted, #94a3b8)', fontSize: 11 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15,6 9,12 15,18" /></svg>
+          Back
+        </button>
+        <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 10.5, padding: '2px 6px', borderRadius: 4, color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>{entry.module}</span>
+        <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 10.5, padding: '2px 6px', borderRadius: 4, color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>{entry.button}</span>
+        <span style={{ fontFamily: 'monospace', fontSize: 10, padding: '2px 6px', borderRadius: 4, color: actionColor, background: `color-mix(in srgb, ${actionColor} 10%, transparent)` }}>{entry.action}</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--bs-text-muted, #94a3b8)' }}>{new Date(entry.timestamp).toLocaleString()}</span>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'var(--bs-surface, #1e2026)', flexShrink: 0, overflowX: 'auto' }}>
+        {_AUDIT_DETAIL_TABS.map(t => (
+          <button key={t.id} type="button" onClick={() => setActiveTab(t.id)}
+            style={{ padding: '7px 12px', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap', background: 'none', border: 'none', borderBottom: `2px solid ${activeTab === t.id ? color : 'transparent'}`, color: activeTab === t.id ? color : 'var(--bs-text-muted, #94a3b8)', fontWeight: activeTab === t.id ? 600 : 400, transition: 'color 0.15s' }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        {activeTab === 'summary' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px', fontSize: 11, alignItems: 'start' }}>
+              {[
+                ['Event ID',    <span style={{ fontFamily: 'monospace', fontSize: 10.5, padding: '2px 6px', borderRadius: 4, color, background: `color-mix(in srgb, ${color} 10%, transparent)` }}>{entry.eventId}</span>],
+                ['Module',      <span style={{ color: 'var(--bs-text-primary, #e2e8f0)' }}>{entry.module}</span>],
+                ['Button',      <span style={{ color: 'var(--bs-text-primary, #e2e8f0)' }}>{entry.button}</span>],
+                ['Action',      <span style={{ color: actionColor }}>{entry.action}</span>],
+                ['Description', <span style={{ color: 'var(--bs-text-primary, #e2e8f0)' }}>{entry.description}</span>],
+                ['Timestamp',   <span style={{ fontFamily: 'monospace', color: 'var(--bs-text-primary, #e2e8f0)' }}>{new Date(entry.timestamp).toISOString()}</span>],
+              ].map(([label, val], idx) => (
+                <Fragment key={idx}>
+                  <span style={{ color: 'var(--bs-text-muted, #94a3b8)', whiteSpace: 'nowrap', paddingTop: 2 }}>{label}</span>
+                  <span>{val}</span>
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )}
+        {activeTab === 'metadata' && (
+          entry.metadata
+            ? <_AuditPayloadBlock label="Metadata" value={typeof entry.metadata === 'string' ? entry.metadata : JSON.stringify(entry.metadata, null, 2)} color={color} />
+            : <span style={{ fontSize: 11.5, color: 'var(--bs-text-muted, #94a3b8)', fontStyle: 'italic' }}>— no metadata —</span>
+        )}
+        {activeTab === 'full' && (
+          <_AuditPayloadBlock label="Full Event" value={fullJson} color={color} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function UiAuditLogTab() {
+  const [log, setLog] = useState(() => getUiAuditLog())
+  const [filter, setFilter] = useState('')
+  const [viewEntry, setViewEntry] = useState(null)
+
+  useEffect(() => {
+    setLog(getUiAuditLog())
+    return subscribeUiAudit(() => setLog([...getUiAuditLog()]))
+  }, [])
+
+  const filtered = filter
+    ? log.filter(e => [e.module, e.button, e.action, e.eventId, e.description].join(' ').toLowerCase().includes(filter.toLowerCase()))
+    : log
+
+  if (viewEntry) {
+    return <_AuditEntryDetail entry={viewEntry} onBack={() => setViewEntry(null)} />
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* ── Header (Daakia style) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'var(--bs-surface, #1e2026)', flexShrink: 0 }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--bs-text-muted, #94a3b8)" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--bs-text-primary, #e2e8f0)', flex: 1 }}>UI Audit</span>
+        <span style={{ fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>{log.length} records</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', width: 150 }}>
+          <SearchIcon width={10} height={10} style={{ color: 'var(--bs-text-muted, #94a3b8)', flexShrink: 0 }} />
+          <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter…"
+            style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', fontSize: 11, color: 'var(--bs-text-primary, #e2e8f0)' }} />
+          {filter && (
+            <button type="button" onClick={() => setFilter('')}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, borderRadius: 3, border: 'none', cursor: 'pointer', background: 'transparent', color: 'var(--bs-text-muted, #94a3b8)', padding: 0 }}>
+              <XIcon width={9} height={9} />
+            </button>
+          )}
+        </div>
+        <button type="button" onClick={() => setLog([...getUiAuditLog()])} title="Refresh"
+          style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer', background: 'transparent', color: 'var(--bs-text-muted, #94a3b8)', fontSize: 11 }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Refresh
+        </button>
+        {log.length > 0 && (
+          <button type="button" onClick={() => { clearUiAuditLog(); setLog([]); setViewEntry(null) }} title="Clear all"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 6, border: '1px solid color-mix(in srgb, #ef4444 30%, transparent)', cursor: 'pointer', background: 'transparent', color: '#ef4444', fontSize: 11 }}>
+            <TrashIcon width={10} height={10} />
+            Clear All
+          </button>
+        )}
+      </div>
+
+      {/* ── Table ── */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" style={{ opacity: 0.25 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            {log.length === 0 ? 'No events yet — enable events in Audit Config and interact with the canvas' : 'No matches'}
+          </div>
+        ) : (
+          <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bs-surface, #1e2026)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)', width: 28 }}>#</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)' }}>Module</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)' }}>Event</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)', width: 60 }}>Action</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)' }}>Description</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500, color: 'var(--bs-text-muted, #94a3b8)', width: 75, whiteSpace: 'nowrap' }}>Time</th>
+                <th style={{ width: 20 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e, i) => {
+                const color = e.color || '#818cf8'
+                const actionColor = _auditActionColor(e.action)
+                return (
+                  <tr
+                    key={e.id}
+                    onClick={() => setViewEntry(e)}
+                    style={{ borderBottom: '1px solid color-mix(in srgb, rgba(255,255,255,0.06) 50%, transparent)', cursor: 'pointer', transition: 'background 0.1s' }}
+                    onMouseEnter={ev => { ev.currentTarget.style.background = 'rgba(255,255,255,0.025)' }}
+                    onMouseLeave={ev => { ev.currentTarget.style.background = '' }}
+                  >
+                    <td style={{ padding: '6px 8px', color: 'var(--bs-text-muted, #94a3b8)', fontFamily: 'monospace', fontSize: 10 }}>{filtered.length - i}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 10.5, padding: '2px 6px', borderRadius: 4, color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>
+                        {e.module}
+                      </span>
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: 10.5, padding: '2px 6px', borderRadius: 4, color, background: `color-mix(in srgb, ${color} 12%, transparent)` }}>
+                        {e.button}
+                      </span>
+                    </td>
+                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 10, color: actionColor }}>{e.action}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: 'var(--bs-text-primary, #e2e8f0)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.description}</td>
+                    <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 10, color: 'var(--bs-text-muted, #94a3b8)', whiteSpace: 'nowrap' }}>{new Date(e.timestamp).toLocaleTimeString()}</td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--bs-text-muted, #94a3b8)' }}><polyline points="9,6 15,12 9,18" /></svg>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── UI Audit Config Tab ──────────────────────────────────────────────── */
+
+function UiAuditConfigTab() {
+  const [tick, setTick] = useState(0)
+  const refresh = useCallback(() => setTick(t => t + 1), [])
+  const [collapsed, setCollapsed] = useState(new Set())
+
+  const toggle = (id, enabled) => { setAuditEventEnabled(id, enabled); refresh() }
+  const toggleModule = (module, enable) => {
+    AUDIT_EVENT_DEFS.filter(d => d.module === module).forEach(d => setAuditEventEnabled(d.id, enable))
+    refresh()
+  }
+  const toggleAll = (enable) => { AUDIT_EVENT_DEFS.forEach(d => setAuditEventEnabled(d.id, enable)); refresh() }
+  const toggleCollapse = (module) => setCollapsed(prev => { const n = new Set(prev); n.has(module) ? n.delete(module) : n.add(module); return n })
+
+  const grouped = MODULE_ORDER.map(module => ({
+    module,
+    defs: AUDIT_EVENT_DEFS.filter(d => d.module === module),
+  })).filter(g => g.defs.length > 0)
+
+  const totalEnabled = AUDIT_EVENT_DEFS.filter(d => isAuditEventEnabled(d.id)).length
+
+  return (
+    <div className="bs-devtools-uicfg">
+      {/* Toolbar */}
+      <div className="bs-uicfg-toolbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 500, color: '#e2e8f0' }}>Audit Config</span>
+          <span className="bs-uicfg-count">{totalEnabled}/{AUDIT_EVENT_DEFS.length} active</span>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="bs-uicfg-action-btn" style={{ color: '#4ade80', borderColor: 'rgba(74,222,128,0.25)', background: 'rgba(74,222,128,0.06)' }} onClick={() => toggleAll(true)}>Enable All</button>
+          <button className="bs-uicfg-action-btn" style={{ color: '#f87171', borderColor: 'rgba(248,113,113,0.25)', background: 'rgba(248,113,113,0.06)' }} onClick={() => toggleAll(false)}>Disable All</button>
+          <button className="bs-uicfg-action-btn" onClick={resetAuditConfig}>Reset</button>
+        </div>
+      </div>
+
+      <div className="bs-uicfg-desc">
+        Control which UI events get recorded in the <strong>Audit Log</strong>. Events are structured as
+        <code className="bs-uicfg-code">module · button · action</code> — disable noisy events to keep the log focused.
+      </div>
+
+      {/* Category groups */}
+      <div className="bs-uicfg-groups">
+        {grouped.map(({ module, defs }) => {
+          const color = defs[0]?.color ?? '#94a3b8'
+          const enabledCount = defs.filter(d => isAuditEventEnabled(d.id)).length
+          const allEnabled = enabledCount === defs.length
+          const isCollapsed = collapsed.has(module)
+
+          return (
+            <div key={module} className="bs-uicfg-group">
+              {/* Group header */}
+              <div className="bs-uicfg-group-header">
+                <button className="bs-uicfg-collapse-btn" onClick={() => toggleCollapse(module)}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                    style={{ color, transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform .2s', opacity: 0.7 }}>
+                    <polyline points="9 18 15 12 9 6"/>
+                  </svg>
+                  <span className="bs-uicfg-module-chip" style={{ color, background: `color-mix(in srgb, ${color} 10%, transparent)` }}>
+                    {module}
+                  </span>
+                </button>
+                <div className="bs-uicfg-divider" style={{ background: `color-mix(in srgb, ${color} 15%, transparent)` }} />
+                <span style={{ fontSize: 10, color: '#64748b' }}>{enabledCount}/{defs.length}</span>
+                {/* Group toggle */}
+                <button
+                  className="bs-uicfg-group-toggle"
+                  style={{ background: allEnabled ? color : 'rgba(255,255,255,0.1)' }}
+                  onClick={() => toggleModule(module, !allEnabled)}
+                  title={allEnabled ? `Disable all ${module}` : `Enable all ${module}`}
+                >
+                  <span className="bs-uicfg-toggle-thumb" style={{ left: allEnabled ? 14 : 2 }} />
+                </button>
+              </div>
+
+              {/* Event rows */}
+              {!isCollapsed && (
+                <div className="bs-uicfg-rows" style={{ borderColor: `color-mix(in srgb, ${color} 12%, transparent)`, background: `color-mix(in srgb, ${color} 2%, transparent)` }}>
+                  {defs.map((def, idx) => {
+                    const enabled = isAuditEventEnabled(def.id)
+                    return (
+                      <div key={def.id} className="bs-uicfg-row" style={{ borderColor: idx < defs.length - 1 ? 'rgba(255,255,255,0.04)' : 'transparent' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 11, fontWeight: 500, color: enabled ? '#e2e8f0' : '#64748b' }}>{def.description}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <code style={{ fontSize: 9, color, background: `color-mix(in srgb, ${color} 10%, transparent)`, borderRadius: 3, padding: '1px 4px' }}>{def.button}</code>
+                            <span style={{ fontSize: 9, color: '#475569' }}>·</span>
+                            <span style={{ fontSize: 9, color: '#475569', fontFamily: 'monospace' }}>{def.action}</span>
+                            <span style={{ fontSize: 9, color: '#475569' }}>·</span>
+                            <span style={{ fontSize: 9, color: '#334155', fontFamily: 'monospace' }}>{def.id}</span>
+                          </div>
+                        </div>
+                        <button
+                          className="bs-uicfg-event-toggle"
+                          style={{ background: enabled ? color : 'rgba(255,255,255,0.1)' }}
+                          onClick={() => toggle(def.id, !enabled)}
+                          title={enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
+                        >
+                          <span className="bs-uicfg-toggle-thumb" style={{ left: enabled ? 17 : 3 }} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ── DB Explorer Tab ──────────────────────────────────────────────────────── */
+
+const _DB_TABLE_COLORS = {
+  bs_store:           '#818cf8',
+  workspace_snapshot: '#10b981',
+  ce_audit:           '#22d3ee',
+  app_settings:       '#f59e0b',
+  request_history:    '#06b6d4',
+}
+function _dbColor(name) { return _DB_TABLE_COLORS[name] ?? '#818cf8' }
+
+function _DbJsonModal({ value, accentColor, onClose }) {
+  let pretty
+  if (typeof value === 'string') {
+    pretty = value
+    try { pretty = JSON.stringify(JSON.parse(value), null, 2) } catch {}
+  } else {
+    pretty = safeJsonStr(value)
+  }
+  return createPortal(
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          display: 'flex', flexDirection: 'column', borderRadius: 12, overflow: 'hidden',
+          boxShadow: '0 25px 60px rgba(0,0,0,0.6)',
+          width: 'min(700px, 90vw)', height: 'min(520px, 80vh)',
+          backgroundColor: 'var(--bs-surface, #1e2026)',
+          border: `1px solid color-mix(in srgb, ${accentColor} 25%, transparent)`,
+        }}
+      >
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '8px 14px', flexShrink: 0,
+          borderBottom: `1px solid color-mix(in srgb, ${accentColor} 15%, transparent)`,
+          background: `color-mix(in srgb, ${accentColor} 6%, transparent)`,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: accentColor }}>JSON Viewer</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 10, fontFamily: 'monospace', color: 'var(--bs-text-muted, #94a3b8)' }}>{pretty.length.toLocaleString()} chars</span>
+            <button type="button" onClick={onClose} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 4, border: 'none', cursor: 'pointer', background: 'transparent', color: 'var(--bs-text-muted, #94a3b8)' }}>
+              <XIcon size={13} />
+            </button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px 14px' }}>
+          <pre style={{ margin: 0, fontFamily: 'monospace', fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--bs-text-primary, #e2e8f0)', lineHeight: 1.6 }}>
+            {pretty.slice(0, 50000)}
+          </pre>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+function _DbJsonCell({ value, accentColor }) {
+  const [open, setOpen] = useState(false)
+  const isObj = value !== null && typeof value === 'object'
+  const str = isObj ? safeJsonStr(value) : (value == null ? '' : String(value))
+  const isJson = isObj || str.startsWith('{') || str.startsWith('[')
+  if (!isJson || str.length < 20) {
+    return (
+      <span style={{ fontFamily: 'monospace', fontSize: 10, color: str ? 'var(--bs-text-primary, #e2e8f0)' : 'var(--bs-text-muted, #94a3b8)' }}>
+        {str || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>null</span>}
+      </span>
+    )
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', background: 'none', border: 'none', fontSize: 10, fontFamily: 'monospace', color: accentColor, padding: 0 }}
+        title="Click to open JSON viewer"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9,6 15,12 9,18" /></svg>
+        <span style={{ opacity: 0.7 }}>{`{…} ${str.length} chars`}</span>
+      </button>
+      {open && <_DbJsonModal value={value} accentColor={accentColor} onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
+function DbExplorerTab() {
+  const base = typeof window !== 'undefined' ? (window.__CK8T_BRIDGE_BASE__ || '') : ''
+  const [tables, setTables] = useState([])
+  const [activeTable, setActiveTable] = useState(null)
+  const [rows, setRows] = useState([])
+  const [columns, setColumns] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [rowsLoading, setRowsLoading] = useState(false)
+
+  const loadTables = useCallback(async () => {
+    if (!base) return
+    setLoading(true)
+    try {
+      const r = await fetch(`${base}/ck8t/devtools/db`)
+      if (r.ok) { const d = await r.json(); setTables(d.tables ?? []) }
+    } catch {}
+    finally { setLoading(false) }
+  }, [base])
+
+  const loadRows = useCallback(async (tableName) => {
+    if (!base || !tableName) return
+    setRowsLoading(true); setRows([]); setColumns([])
+    try {
+      const r = await fetch(`${base}/ck8t/devtools/db/${encodeURIComponent(tableName)}/rows?limit=200`)
+      if (r.ok) { const d = await r.json(); setRows(d); if (d.length > 0) setColumns(Object.keys(d[0])) }
+    } catch {}
+    finally { setRowsLoading(false) }
+  }, [base])
+
+  useEffect(() => { loadTables() }, [loadTables])
+  useEffect(() => { if (activeTable) loadRows(activeTable) }, [activeTable, loadRows])
+
+  if (!base) return <div className="bs-devtools-empty">DB Explorer is only available in the VS Code extension.</div>
+
+  const activeColor = activeTable ? _dbColor(activeTable) : '#818cf8'
+
+  return (
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      {/* ── Left: table list ── */}
+      <div style={{ width: 190, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.07)', display: 'flex', flexDirection: 'column', background: 'rgba(255,255,255,0.01)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+          <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--bs-text-muted, #94a3b8)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Tables</span>
+          <button type="button" onClick={loadTables} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--bs-text-muted, #94a3b8)', padding: 0, display: 'flex' }}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+          {loading && <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>Loading…</div>}
+          {tables.map(tbl => {
+            const c = _dbColor(tbl.name)
+            const isActive = activeTable === tbl.name
+            return (
+              <button
+                key={tbl.name}
+                type="button"
+                onClick={() => setActiveTable(tbl.name)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  width: 'calc(100% - 8px)', margin: '0 4px 2px',
+                  padding: '6px 8px', textAlign: 'left',
+                  borderRadius: 6, border: 'none', cursor: 'pointer', transition: 'all 0.12s',
+                  background: isActive ? `color-mix(in srgb, ${c} 12%, transparent)` : 'transparent',
+                  color: isActive ? c : 'var(--bs-text-primary, #e2e8f0)',
+                  borderLeft: `2px solid ${isActive ? c : 'transparent'}`,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                  </svg>
+                  <span style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{tbl.name}</span>
+                </div>
+                <span style={{ fontSize: 9, fontFamily: 'monospace', fontWeight: 700, padding: '1px 6px', borderRadius: 9999, flexShrink: 0, marginLeft: 4, color: c, background: `color-mix(in srgb, ${c} 12%, transparent)` }}>
+                  {tbl.rowCount}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── Right: rows ── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {!activeTable ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8 }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.2, color: 'var(--bs-text-muted, #94a3b8)' }}>
+              <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+            <span style={{ fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>Select a table to browse rows</span>
+          </div>
+        ) : rowsLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>Loading…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 11, color: 'var(--bs-text-muted, #94a3b8)' }}>
+            No rows in <code style={{ marginLeft: 4, fontFamily: 'monospace', color: activeColor }}>{activeTable}</code>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', flexShrink: 0, borderBottom: `1px solid color-mix(in srgb, ${activeColor} 15%, transparent)`, background: `color-mix(in srgb, ${activeColor} 4%, transparent)` }}>
+              <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: activeColor }}>{activeTable}</span>
+              <span style={{ fontSize: 9, fontFamily: 'monospace', padding: '1px 6px', borderRadius: 9999, color: activeColor, background: `color-mix(in srgb, ${activeColor} 12%, transparent)` }}>{rows.length} rows</span>
+            </div>
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <table style={{ width: '100%', fontSize: 10.5, borderCollapse: 'collapse' }}>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 10, backgroundColor: 'var(--bs-surface, #1e2026)' }}>
+                  <tr>
+                    {columns.map((col, i) => (
+                      <th key={col} style={{ textAlign: 'left', padding: '6px 12px', fontWeight: 600, whiteSpace: 'nowrap', borderBottom: `1px solid color-mix(in srgb, ${activeColor} 12%, transparent)`, color: i === 0 ? activeColor : 'var(--bs-text-muted, #94a3b8)' }}>
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, i) => (
+                    <tr
+                      key={i}
+                      style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', transition: 'background 0.1s' }}
+                      onMouseEnter={ev => { ev.currentTarget.style.background = `color-mix(in srgb, ${activeColor} 3%, transparent)` }}
+                      onMouseLeave={ev => { ev.currentTarget.style.background = '' }}
+                    >
+                      {columns.map((col, ci) => (
+                        <td key={col} style={{ padding: '5px 12px', verticalAlign: 'top', maxWidth: 200 }}>
+                          <_DbJsonCell value={row[col]} accentColor={ci === 0 ? activeColor : '#818cf8'} />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function safeJsonStr(v) { try { return JSON.stringify(v, null, 2) } catch { return String(v) } }

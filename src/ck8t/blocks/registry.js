@@ -6,6 +6,7 @@
  * `ck8t/extensions/*.js` auto-registers the exported BlockConfig
  * (ComfyUI-style plugin pattern).
  */
+import React from 'react'
 import * as Core from './blocks'
 
 /** Start with the core (sim-ported) block set. */
@@ -128,6 +129,105 @@ export function onRegistryChange(fn) {
   return () => extensionListeners.delete(fn)
 }
 
+/**
+ * Browser-side runners for community blocks.
+ * Populated by loadInstalledBlocks() from block configs that include a `run` function.
+ * The browser graph-runner checks this Map for unrecognised block types.
+ */
+export const customBrowserBlockRunners = new Map()
+
+/**
+ * Convert a plain SVG path string from a community block's `iconSvg` field
+ * into a lightweight React component so it renders inside the node icon well.
+ * Community blocks can't import React, so they supply the raw path `d` value.
+ */
+function makeSvgIcon(d) {
+  function CommunityBlockIcon({ className, style }) {
+    return React.createElement(
+      'svg',
+      { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round', className, style },
+      ...d.split('|').map((path, i) => React.createElement('path', { key: i, d: path.trim() })),
+    )
+  }
+  return CommunityBlockIcon
+}
+
+/** Enrich a community block config before registering (icon, defaults, browser runner). */
+function prepareBlock(blockConfig) {
+  blockConfig.category = blockConfig.category || 'custom'
+  if (typeof blockConfig.iconSvg === 'string' && !blockConfig.icon) {
+    blockConfig.icon = makeSvgIcon(blockConfig.iconSvg)
+  }
+  if (typeof blockConfig.run === 'function' && !customBrowserBlockRunners.has(blockConfig.type)) {
+    customBrowserBlockRunners.set(blockConfig.type, blockConfig.run.bind(blockConfig))
+  }
+}
+
+/**
+ * Dynamically load all installed blocks from the ck8t-server block-manager endpoint.
+ * Called once on app startup. Blocks land in the 'custom' category automatically.
+ * Safe to call multiple times — skips already-registered types.
+ */
+export async function loadInstalledBlocks() {
+  // ── VS Code extension context ──────────────────────────────────────────────
+  // The panel reads UI files server-side and injects their object literals as
+  // window.__CK8T_BLOCK_DEFS__ in an inline script at startup.
+  // After install/uninstall, the panel pushes updated defs via postMessage.
+  const defs = globalThis.__CK8T_BLOCK_DEFS__
+  if (defs && typeof defs === 'object' && Object.keys(defs).length > 0) {
+    for (const blockConfig of Object.values(defs)) {
+      if (!blockConfig || !blockConfig.type) continue
+      // Always register the runner first, even if the block type is already in the registry
+      // (guards against cases where the block was pre-registered without a runner).
+      if (typeof blockConfig.run === 'function' && !customBrowserBlockRunners.has(blockConfig.type)) {
+        customBrowserBlockRunners.set(blockConfig.type, blockConfig.run.bind(blockConfig))
+        console.log('[ck8t] browser runner registered:', blockConfig.type)
+      }
+      if (registry[blockConfig.type]) continue
+      prepareBlock(blockConfig)
+      registerBlock(blockConfig)
+    }
+    if (globalThis.__CK8T_MODE__ === 'vscode-extension') return
+  } else {
+    console.log('[ck8t] loadInstalledBlocks: __CK8T_BLOCK_DEFS__ empty or missing', defs)
+  }
+
+  // ── Web UI context — fetch list from ck8t-server, then import UI files ────
+  try {
+    const base = (
+      globalThis.__CK8T_BRIDGE_BASE__ ||
+      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CONVENGINE_BASE) ||
+      'http://localhost:3001/api/v1'
+    ).replace(/\/$/, '')
+
+    const res = await fetch(`${base}/block-manager/blocks`)
+    if (!res.ok) return
+    const installed = await res.json()
+    if (!Array.isArray(installed)) return
+
+    for (const manifest of installed) {
+      for (const blockEntry of (manifest.blocks || [])) {
+        if (!blockEntry.ui || !blockEntry.type) continue
+        if (registry[blockEntry.type]) continue
+
+        const uiUrl = `${base}/block-manager/ui/${encodeURIComponent(manifest.id)}/${blockEntry.ui}`
+        try {
+          const mod = await import(/* @vite-ignore */ uiUrl)
+          const blockConfig = mod.default ?? mod.block ?? null
+          if (blockConfig?.type) {
+            prepareBlock(blockConfig)
+            registerBlock(blockConfig)
+          }
+        } catch (err) {
+          console.warn(`[ck8t] Failed to load block UI "${blockEntry.type}" from "${manifest.id}":`, err)
+        }
+      }
+    }
+  } catch {
+    // server not running — silently skip
+  }
+}
+
 export { registry }
 
 /* ── Shared category & sub-group constants ── */
@@ -220,7 +320,28 @@ export function groupBlocksByCategory(blocks, category) {
   }
 
   const remaining = blocks.filter((b) => !used.has(b.type))
-  if (remaining.length > 0) groups.push({ id: 'other', label: 'Other', items: remaining })
+  if (remaining.length > 0) {
+    // If any remaining block declares a 'group' field, cluster by it dynamically.
+    const hasNamedGroups = remaining.some((b) => b.group)
+    if (hasNamedGroups) {
+      const dynamicMap = new Map()
+      const ungrouped = []
+      for (const b of remaining) {
+        if (b.group) {
+          if (!dynamicMap.has(b.group)) dynamicMap.set(b.group, [])
+          dynamicMap.get(b.group).push(b)
+        } else {
+          ungrouped.push(b)
+        }
+      }
+      for (const [label, items] of dynamicMap) {
+        groups.push({ id: label.toLowerCase().replace(/\s+/g, '-'), label, items })
+      }
+      if (ungrouped.length > 0) groups.push({ id: 'other', label: 'Other', items: ungrouped })
+    } else {
+      groups.push({ id: 'other', label: 'Other', items: remaining })
+    }
+  }
 
   return { topItems, groups }
 }

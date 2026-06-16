@@ -5,7 +5,7 @@
  * port at load time (window.__BS_BRIDGE_BASE__) so all API calls from the
  * React canvas are routed here instead of to the browser Vite proxy.
  *
- * Route mapping (mirrors the Vite proxy in convengine-ui):
+ * Route mapping:
  *   /api/v1/ck8t/agent          → vscode.lm (GitHub Copilot)
  *   /api/v1/ck8t/run            → graph-runner.ts (Node.js)
  *   /api/v1/ck8t/workspace/:id  → SQLite
@@ -30,6 +30,10 @@ import { deployRouter } from './routes/deploy';
 import { providerRouter } from './routes/provider';
 import { configRouter } from './routes/config';
 import { proxyRouter } from './routes/proxy';
+import { blockManagerRouter } from './routes/block-manager';
+import { auditRouter } from './routes/audit';
+import { devtoolsRouter } from './routes/devtools';
+import { aiProvidersRouter } from './routes/ai-providers';
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -70,6 +74,10 @@ export async function startBridgeServer(): Promise<number> {
   router.use(providerRouter());
   router.use(configRouter());
   router.use(proxyRouter());
+  router.use(blockManagerRouter());
+  router.use(auditRouter());
+  router.use(devtoolsRouter());
+  router.use(aiProvidersRouter());
   app.use('/api/v1', router);
 
   /* Webhook catch-all — must match /hook/:workflowId */
@@ -78,6 +86,10 @@ export async function startBridgeServer(): Promise<number> {
 
   await new Promise<void>((resolve) => {
     _server = app.listen(port, '127.0.0.1', resolve);
+    // Disable Node.js 18+ default 5-minute request timeout — MCP tool calls
+    // (especially MLX image generation) can take much longer than that.
+    _server.requestTimeout = 0;
+    _server.setTimeout(0);
   });
 
   console.log(`[ck8t] Bridge server → http://127.0.0.1:${port}`);

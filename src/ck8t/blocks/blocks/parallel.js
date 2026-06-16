@@ -1,7 +1,8 @@
 /** Parallel container block — mirrors sim's parallel block shape. */
 import { ParallelIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ParallelBlock = {
+export const ParallelBlock = defineCk8tBlock({
   type: 'parallel',
   name: 'Parallel',
   description: 'Run branches concurrently',
@@ -39,4 +40,4 @@ export const ParallelBlock = {
     results: { type: 'array', description: 'Array of branch outputs' },
     winner: { type: 'json', description: 'First-completed branch output (race mode)' },
   },
-}
+})

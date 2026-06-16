@@ -9,22 +9,41 @@
  * config is set (e.g. from YAML), models come from that config. Otherwise,
  * built-in defaults are used.
  */
-import { getConfiguredModelOptions, getConfiguredDefaultModel } from '../stores/llm-config-store'
+import { getConfiguredModelOptions, getConfiguredDefaultModel, getConfiguredDefaultProvider } from '../stores/llm-config-store'
+import { getAiProviderOptions, getAiProviderModelOptions } from '../stores/ai-providers-store'
 
 /**
  * Returns the list of models available in agent/router combobox.
- * Consumer-configured models take priority over built-in defaults.
+ * When the node has its own "AI Provider" field set (values.provider), the
+ * list comes straight from that provider's own model list in AI Provider
+ * Settings — not from the execution-time custom_providers mirror, which can
+ * lag behind (e.g. before a key/model edit has been re-synced). Falls back
+ * to the globally active provider's models, or all models, when unset.
  * Mirrors sim's getModelOptions() shape: Array<{ label, id, group? }>.
+ * @param {{ provider?: string }} [values] — current node subBlockValues
  */
-export function getModelOptions() {
-  return getConfiguredModelOptions()
+export function getModelOptions(values) {
+  const provider = values?.provider
+  if (provider) {
+    const own = getAiProviderModelOptions(provider)
+    if (own.length > 0) return own
+  }
+  return getConfiguredModelOptions(provider)
 }
 
 /**
- * Returns the default model id based on consumer config.
+ * Returns the default model id — the user's chosen default in AI Provider
+ * Settings, if set, otherwise the consumer-config default.
  */
 export function getDefaultModel() {
   return getConfiguredDefaultModel()
+}
+
+/**
+ * Returns the default provider id — same precedence as getDefaultModel().
+ */
+export function getDefaultProvider() {
+  return getConfiguredDefaultProvider()
 }
 
 /**
@@ -33,6 +52,11 @@ export function getDefaultModel() {
  * API Key is intentionally omitted — auth is handled via the LLM Provider
  * settings (extension: Custom LLM Providers panel; web: same panel backed by localStorage).
  */
+/** Returns available AI provider options for the agent block provider dropdown. */
+export function getProviderOptions() {
+  return getAiProviderOptions()
+}
+
 export function getProviderCredentialSubBlocks() {
   return []
 }

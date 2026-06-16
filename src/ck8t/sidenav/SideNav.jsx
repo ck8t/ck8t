@@ -14,12 +14,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useTabsStore, agentTabId, skillTabId, teamTabId, workflowTabId } from '../stores/tabs-store'
 import BlockPalette from './BlockPalette'
+import { ManagerIcon } from '../components/BlockManager'
 import ContextMenu from './ContextMenu'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateWorkflowModal from '../components/CreateWorkflowModal'
 import ImportWorkflowModal from '../components/ImportWorkflowModal'
 import StyledSelect from '../components/StyledSelect'
 import { pickAndParseWorkflowJSON } from '../utils/import-workflow'
+import { flushSnapshot } from '../stores/snapshot'
+import { useUiStateStore } from '../stores/ui-state-store'
 import {
   WorkflowsIcon,
   TeamsIcon,
@@ -59,18 +62,23 @@ const MAX_W = 480
 const DEFAULT_W = 288
 
 export default function SideNav() {
-  const [activeTab, setActiveTab] = useState('blocks')
-  const [open, setOpen] = useState(true)
-  const [width, setWidth] = useState(DEFAULT_W)
+  const activeTab  = useUiStateStore((s) => s.sideNavTab)
+  const open       = useUiStateStore((s) => s.sideNavOpen)
+  const width      = useUiStateStore((s) => s.sideNavWidth)
+  const setPanelState = useUiStateStore((s) => s.setPanelState)
+  const setActiveTab = (v) => setPanelState({ sideNavTab: v })
+  const setOpen      = (v) => setPanelState({ sideNavOpen: typeof v === 'function' ? v(open) : v })
+  const setWidth     = (v) => setPanelState({ sideNavWidth: typeof v === 'function' ? v(width) : v })
   const [dragging, setDragging] = useState(false)
   const [showTip, setShowTip] = useState(false)
   const [importPending, setImportPending] = useState(null) // parsed workflow waiting for team pick
   const [importError, setImportError]   = useState(null)
-  const dragRef = useRef({ active: false, startX: 0, startW: DEFAULT_W, moved: false })
+  const dragRef = useRef({ active: false, startX: 0, startW: width, moved: false })
 
   const panel = useMemo(() => TABS.find((t) => t.id === activeTab), [activeTab])
   const openWiki = useTabsStore((s) => s.openWiki)
   const openSettings = useTabsStore((s) => s.openSettings)
+  const openManager = useTabsStore((s) => s.openManager)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const teams = useWorkspaceStore((s) => s.teams)
   const importWorkflow = useWorkspaceStore((s) => s.importWorkflow)
@@ -94,6 +102,8 @@ export default function SideNav() {
     })
     openWorkflowTab(wf.id, wf.name)
     setImportPending(null)
+    // Immediately persist — don't rely on 2 s debounce; panel close would lose the workflow
+    flushSnapshot()
   }
 
   function onRailClick(id) {
@@ -175,6 +185,14 @@ export default function SideNav() {
         >
           <ImportIcon className="bs-rail-ico" />
           <span className="bs-rail-label">Import</span>
+        </button>
+        <button
+          className="bs-rail-btn"
+          onClick={() => openManager()}
+          title="Block Manager — install community blocks"
+        >
+          <ManagerIcon className="bs-rail-ico" />
+          <span className="bs-rail-label">Manager</span>
         </button>
         <button
           className="bs-rail-btn"

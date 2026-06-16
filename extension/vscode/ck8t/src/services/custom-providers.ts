@@ -8,6 +8,7 @@ import { fetchOpenAiModels, createOpenAiClient } from './adapters/openai';
 import { fetchAnthropicModels, createAnthropicClient } from './adapters/anthropic';
 import { fetchLmStudioModels, createLmStudioClient } from './adapters/lmstudio';
 import { fetchOllamaModels, createOllamaClient } from './adapters/ollama';
+import { storeApiKey, retrieveApiKey, deleteApiKey } from './secret-store';
 
 export type { CustomProviderConfig, ModelInfo };
 
@@ -15,16 +16,30 @@ const COLLECTION = 'custom_providers';
 
 /* ── CRUD ─────────────────────────────────────────────────────────── */
 
+/** DB records never contain apiKey — use getCustomProviderWithKey() when the actual key is needed. */
 export function getAllCustomProviders(): CustomProviderConfig[] {
   return findAll<CustomProviderConfig>(COLLECTION);
 }
 
-export function saveCustomProvider(cfg: CustomProviderConfig): CustomProviderConfig {
-  return upsert(COLLECTION, cfg.key, cfg);
+/** Merge the persisted (keyless) config with its OS-keychain-backed API key. */
+export async function getCustomProviderWithKey(key: string): Promise<CustomProviderConfig | undefined> {
+  const cfg = getAllCustomProviders().find((p) => p.key === key);
+  if (!cfg) return undefined;
+  const apiKey = await retrieveApiKey(key);
+  return { ...cfg, apiKey };
 }
 
-export function deleteCustomProvider(key: string): void {
+/** Persists apiKey to SecretStorage (OS keychain) and the rest of the config to SQLite — never both in the same place. */
+export async function saveCustomProvider(cfg: CustomProviderConfig): Promise<CustomProviderConfig> {
+  const { apiKey, ...rest } = cfg;
+  if (apiKey) await storeApiKey(cfg.key, apiKey);
+  const saved = upsert(COLLECTION, cfg.key, rest as CustomProviderConfig);
+  return { ...saved, apiKey };
+}
+
+export async function deleteCustomProvider(key: string): Promise<void> {
   remove(COLLECTION, key);
+  await deleteApiKey(key);
 }
 
 /* ── Model fetching ───────────────────────────────────────────────── */
@@ -34,43 +49,56 @@ export function deleteCustomProvider(key: string): void {
  * Updates the cached model list on the stored provider record.
  */
 export async function fetchAndCacheModels(key: string): Promise<ModelInfo[]> {
-  const providers = getAllCustomProviders();
-  const cfg = providers.find((p) => p.key === key);
+  const cfg = await getCustomProviderWithKey(key);
   if (!cfg) throw new Error(`Custom provider not found: ${key}`);
 
   const models = await fetchModelsFromConfig(cfg);
 
-  // Update cache in DB
-  upsert(COLLECTION, cfg.key, { ...cfg, cachedModels: models });
+  // Update cache in DB — strip apiKey again, it must never reach bs_store
+  const { apiKey, ...rest } = cfg;
+  upsert(COLLECTION, key, { ...rest, cachedModels: models } as CustomProviderConfig);
 
   return models;
 }
 
 async function fetchModelsFromConfig(cfg: CustomProviderConfig): Promise<ModelInfo[]> {
   switch (cfg.type) {
-    case 'openai':    return fetchOpenAiModels(cfg);
+    case 'openai':
+    case 'deepseek':
+    case 'grok':
+    case 'mistral':
+    case 'gemini':
+    case 'qwen':
+      return fetchOpenAiModels(cfg);
     case 'anthropic': return fetchAnthropicModels(cfg);
     case 'lmstudio':  return fetchLmStudioModels(cfg);
     case 'ollama':    return fetchOllamaModels(cfg);
     default:
-      throw new Error(`Unknown provider type: ${String((cfg as { type: unknown }).type)}`);
+      // Treat any unknown type as OpenAI-compatible
+      return fetchOpenAiModels(cfg);
   }
 }
 
 /* ── Client factory ───────────────────────────────────────────────── */
 
-export function createCustomProviderClient(key: string): CustomLlmClient {
-  const providers = getAllCustomProviders();
-  const cfg = providers.find((p) => p.key === key);
+export async function createCustomProviderClient(key: string): Promise<CustomLlmClient> {
+  const cfg = await getCustomProviderWithKey(key);
   if (!cfg) throw new Error(`Custom provider not found: ${key}`);
 
   switch (cfg.type) {
-    case 'openai':    return createOpenAiClient(cfg);
+    case 'openai':
+    case 'deepseek':
+    case 'grok':
+    case 'mistral':
+    case 'gemini':
+    case 'qwen':
+      return createOpenAiClient(cfg);
     case 'anthropic': return createAnthropicClient(cfg);
     case 'lmstudio':  return createLmStudioClient(cfg);
     case 'ollama':    return createOllamaClient(cfg);
     default:
-      throw new Error(`Unknown provider type: ${String((cfg as { type: unknown }).type)}`);
+      // Treat any unknown type as OpenAI-compatible
+      return createOpenAiClient(cfg);
   }
 }
 

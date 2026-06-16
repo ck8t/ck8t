@@ -1,7 +1,8 @@
 /** Ported verbatim from sim/apps/sim/blocks/blocks/condition.ts. */
 import { ConditionalIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ConditionBlock = {
+export const ConditionBlock = defineCk8tBlock({
   type: 'condition',
   name: 'Condition',
   description: 'Add a condition',
@@ -22,4 +23,4 @@ export const ConditionBlock = {
     selectedPath: { type: 'json', description: 'Selected execution path' },
     selectedOption: { type: 'string', description: 'Selected condition option ID' },
   },
-}
+})

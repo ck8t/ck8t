@@ -10,11 +10,14 @@ import { AuthMode, IntegrationType } from '../types'
 import {
   getModelOptions,
   getDefaultModel,
+  getDefaultProvider,
+  getProviderOptions,
   getProviderCredentialSubBlocks,
   RESPONSE_FORMAT_WAND_CONFIG,
 } from '../utils'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const AgentBlock = {
+export const AgentBlock = defineCk8tBlock({
   type: 'agent',
   name: 'Agent',
   description: 'Build an agent',
@@ -47,6 +50,14 @@ export const AgentBlock = {
       rows: 3,
     },
     {
+      id: 'provider',
+      title: 'AI Provider',
+      type: 'dropdown',
+      placeholder: 'Use default provider',
+      get defaultValue() { return getDefaultProvider() },
+      options: getProviderOptions,
+    },
+    {
       id: 'model',
       title: 'Model',
       type: 'combobox',
@@ -54,6 +65,7 @@ export const AgentBlock = {
       required: true,
       get defaultValue() { return getDefaultModel() },
       options: getModelOptions,
+      dependsOn: ['provider'],
     },
     {
       id: 'reasoningEffort',
@@ -229,4 +241,4 @@ export const AgentBlock = {
     status: { type: 'number', description: 'HTTP-like status code (200 on success)' },
     headers: { type: 'json', description: 'Response metadata (model, duration, etc.)' },
   },
-}
+})

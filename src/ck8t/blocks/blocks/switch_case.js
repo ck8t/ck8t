@@ -7,8 +7,9 @@
  * to `default` if nothing matches.
  */
 import { RouterIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SwitchBlock = {
+export const SwitchBlock = defineCk8tBlock({
   type: 'switch',
   name: 'Switch',
   description: 'Dispatch to one of N branches by matching a key',
@@ -53,4 +54,4 @@ export const SwitchBlock = {
     const cases = Array.from({ length: n }, (_, i) => `case_${i + 1}`)
     return [...cases, 'default']
   },
-}
+})

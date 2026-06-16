@@ -1,7 +1,8 @@
 /** Merge block — combine data from multiple branches (n8n-inspired). */
 import { ParallelIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const MergeBlock = {
+export const MergeBlock = defineCk8tBlock({
   type: 'merge',
   name: 'Merge',
   description: 'Combine data from multiple branches',
@@ -48,4 +49,4 @@ export const MergeBlock = {
     merged: { type: 'json', description: 'Merged result' },
     count: { type: 'number', description: 'Number of items in result' },
   },
-}
+})

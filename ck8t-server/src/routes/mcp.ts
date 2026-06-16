@@ -18,9 +18,9 @@ export default async function (app: FastifyInstance) {
     }
   })
 
-  app.post('/mcp/servers', async (req, reply) => {
+  app.post('/mcp/servers', async (req: FastifyRequest<{ Body: Record<string, unknown> }>, reply) => {
     try {
-      const data = await upsertServer(req.body)
+      const data = await upsertServer(req.body as Parameters<typeof upsertServer>[0])
       return reply.send(data)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)

@@ -1,8 +1,9 @@
 /** Ported verbatim from sim/apps/sim/blocks/blocks/api.ts. */
 import { ApiIcon } from '../../components/icons'
 import { IntegrationType } from '../types'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ApiBlock = {
+export const ApiBlock = defineCk8tBlock({
   type: 'api',
   name: 'API',
   description: 'Use any API',
@@ -85,4 +86,4 @@ export const ApiBlock = {
     status: { type: 'number', description: 'HTTP status code' },
     headers: { type: 'json', description: 'HTTP response headers' },
   },
-}
+})

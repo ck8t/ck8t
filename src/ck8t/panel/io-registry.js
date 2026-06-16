@@ -50,11 +50,11 @@ export function getAllPortTypes() {
 // `json` accepts json, array, and any.  `array` accepts array and any.
 // `any` is the universal wildcard — connects to everything.
 const compat = {
-  string:  new Set(['string', 'any']),
-  number:  new Set(['number', 'any']),
-  boolean: new Set(['boolean', 'any']),
+  string:  new Set(['string', 'json', 'any']),
+  number:  new Set(['number', 'json', 'any']),
+  boolean: new Set(['boolean', 'json', 'any']),
   json:    new Set(['json', 'array', 'any']),
-  array:   new Set(['array', 'any']),
+  array:   new Set(['array', 'json', 'any']),
   blob:    new Set(['blob', 'any']),
   any:     new Set(['string', 'number', 'boolean', 'json', 'array', 'blob', 'any']),
 }

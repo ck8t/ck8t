@@ -14,8 +14,9 @@
  * produces a flat `{ title: "...", author: "..." }` map.
  */
 import { JsonMapIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const JsonMapBlock = {
+export const JsonMapBlock = defineCk8tBlock({
   type: 'json_map',
   name: 'JSON Map',
   description: 'Convert JSON to key-value map via JSONPath',
@@ -50,4 +51,4 @@ export const JsonMapBlock = {
   outputs: {
     result: { type: 'json', description: 'Flat key-value map of extracted fields' },
   },
-}
+})

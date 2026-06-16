@@ -1,7 +1,8 @@
 /** Sub-Workflow block — call another workflow as a reusable unit. */
 import { LoopIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const SubWorkflowBlock = {
+export const SubWorkflowBlock = defineCk8tBlock({
   type: 'sub_workflow',
   name: 'Sub-Workflow',
   description: 'Execute another workflow as a sub-routine',
@@ -48,4 +49,4 @@ export const SubWorkflowBlock = {
     status: { type: 'string', description: 'Execution status (success/error)' },
     duration: { type: 'number', description: 'Execution time in ms' },
   },
-}
+})

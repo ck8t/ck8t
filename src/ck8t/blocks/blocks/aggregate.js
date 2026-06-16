@@ -1,7 +1,8 @@
 /** Aggregate block — reduce an array to a single value. */
 import { CodeIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const AggregateBlock = {
+export const AggregateBlock = defineCk8tBlock({
   type: 'aggregate',
   name: 'Aggregate',
   description: 'Reduce array items to a single value',
@@ -49,4 +50,4 @@ export const AggregateBlock = {
     result: { type: 'any', description: 'Aggregated result' },
     count: { type: 'number', description: 'Number of input items' },
   },
-}
+})

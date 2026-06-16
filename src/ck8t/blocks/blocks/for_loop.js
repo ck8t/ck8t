@@ -1,7 +1,8 @@
 /** For loop — run the enclosed sub-flow N times with counter `i`. */
 import { LoopIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const ForLoopBlock = {
+export const ForLoopBlock = defineCk8tBlock({
   type: 'for_loop',
   name: 'For Loop',
   description: 'Iterate count times (0..n-1)',
@@ -19,4 +20,4 @@ export const ForLoopBlock = {
     iterations: { type: 'array', description: 'Results from each iteration' },
     last: { type: 'json', description: 'Output from the final iteration' },
   },
-}
+})

@@ -1,8 +1,9 @@
 /** Ported from sim/apps/sim/blocks/blocks/mcp.ts. */
 import { McpIcon } from '../../components/icons'
 import { IntegrationType } from '../types'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const McpBlock = {
+export const McpBlock = defineCk8tBlock({
   type: 'mcp',
   name: 'MCP Tool',
   description: 'Execute tools from Model Context Protocol (MCP) servers',
@@ -14,6 +15,7 @@ export const McpBlock = {
   tags: ['agentic', 'automation', 'llm'],
   bgColor: '#181C1E',
   icon: McpIcon,
+  hasProgress: true,
   subBlocks: [
     {
       id: 'server',
@@ -55,4 +57,4 @@ export const McpBlock = {
   outputs: {
     content: { type: 'array', description: 'Content array from MCP tool response' },
   },
-}
+})

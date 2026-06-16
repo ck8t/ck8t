@@ -1,7 +1,8 @@
 /** Ported verbatim from sim/apps/sim/blocks/blocks/variables.ts. */
 import { VariableIcon } from '../../components/icons'
+import { defineCk8tBlock } from '../ck8t-block-base.js'
 
-export const VariablesBlock = {
+export const VariablesBlock = defineCk8tBlock({
   type: 'variables',
   name: 'Variables',
   description: 'Set workflow-scoped variables',
@@ -29,4 +30,4 @@ export const VariablesBlock = {
     variables: { type: 'json', description: 'Array of variable objects with name/value' },
   },
   outputs: {},
-}
+})
