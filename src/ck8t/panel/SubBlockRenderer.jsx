@@ -362,6 +362,14 @@ function JsonPreviewInspector({ nodeId }) {
 function SmartPreview({ value }) {
   const media = extractMediaUri(value)
   if (media) {
+    if (media.isExternalUrl) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <img src={media.dataUri} alt="block output" style={{ maxWidth: '100%', borderRadius: 6, border: '1px solid var(--ce-border)', display: 'block' }} />
+          <a href={media.dataUri} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#60a5fa', textDecoration: 'none' }}>↗ Open image</a>
+        </div>
+      )
+    }
     if (media.mimeType === 'application/pdf') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

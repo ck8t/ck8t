@@ -8,6 +8,37 @@
  *
  * Returns { ok: true, workflow } or { ok: false, error: string }.
  */
+
+function _uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * Re-map every node ID to a fresh UUID so imported workflows never collide
+ * with existing canvas nodes across tabs.
+ */
+function _remapIds(nodes, edges, subBlockValues) {
+  const idMap = {}
+  nodes.forEach((n) => { idMap[n.id] = `n_${_uuid()}` })
+
+  const remappedNodes = nodes.map((n) => ({ ...n, id: idMap[n.id] }))
+
+  const remappedEdges = edges.map((e) => ({
+    ...e,
+    id: `e_${_uuid()}`,
+    source: idMap[e.source] ?? e.source,
+    target: idMap[e.target] ?? e.target,
+  }))
+
+  const remappedSBV = {}
+  Object.entries(subBlockValues).forEach(([oldId, val]) => {
+    const newId = idMap[oldId]
+    if (newId) remappedSBV[newId] = val
+  })
+
+  return { nodes: remappedNodes, edges: remappedEdges, subBlockValues: remappedSBV }
+}
+
 export function parseImportedWorkflowJSON(text) {
   let parsed
   try {
@@ -25,11 +56,11 @@ export function parseImportedWorkflowJSON(text) {
     ? parsed.workflow
     : parsed
 
-  const nodes = source.nodes
-  const edges = source.edges
-  const subBlockValues = source.subBlockValues ?? {}
+  const rawNodes = source.nodes
+  const rawEdges = source.edges
+  const rawSBV   = source.subBlockValues ?? {}
 
-  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+  if (!Array.isArray(rawNodes) || !Array.isArray(rawEdges)) {
     return {
       ok: false,
       error: 'Not a ConvEngine workflow JSON — missing "nodes" and/or "edges" arrays.',
@@ -37,7 +68,7 @@ export function parseImportedWorkflowJSON(text) {
   }
 
   // Must have at least one node with blockType to qualify as our format
-  const hasBlockTypes = nodes.some(
+  const hasBlockTypes = rawNodes.some(
     (n) => n?.data?.blockType && typeof n.data.blockType === 'string'
   )
   if (!hasBlockTypes) {
@@ -46,6 +77,10 @@ export function parseImportedWorkflowJSON(text) {
       error: 'Not a ConvEngine workflow JSON — nodes are missing "data.blockType" field.',
     }
   }
+
+  // Re-map all node IDs to fresh UUIDs so this import never collides with
+  // existing workflows open in other tabs.
+  const { nodes, edges, subBlockValues } = _remapIds(rawNodes, rawEdges, rawSBV)
 
   return {
     ok: true,

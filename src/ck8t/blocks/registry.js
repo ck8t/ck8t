@@ -54,6 +54,8 @@ const registry = {
   ai_classifier: Core.AiClassifierBlock,
   mapper: Core.MapperBlock,
   skill: Core.SkillBlock,
+  image_url_preview: Core.ImageUrlPreviewBlock,
+  image_url_to_base64: Core.ImageUrlToBase64Block,
 }
 
 /**
@@ -261,7 +263,7 @@ export const CATEGORY_CONFIG = {
     topTypes: ['starter'],
     subgroups: [
       { id: 'input',      label: 'Input',              types: ['user_input', 'audio_input'] },
-      { id: 'output',     label: 'Output',             types: ['http_response', 'response', 'save_to_files', 'show_preview', 'ext_save_logger', 'mapper'] },
+      { id: 'output',     label: 'Output',             types: ['http_response', 'response', 'save_to_files', 'show_preview', 'image_url_preview', 'image_url_to_base64', 'ext_save_logger', 'mapper'] },
       { id: 'essentials', label: 'Essentials',        types: ['variables', 'sub_workflow'] },
       { id: 'logic',      label: 'Logic & Flow',      types: ['condition', 'if_else', 'if_elseif_else', 'switch', 'router_v2', 'error_handler'] },
       { id: 'loops',      label: 'Loops',             types: ['loop', 'for_loop', 'for_each', 'parallel'] },

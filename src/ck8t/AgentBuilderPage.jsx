@@ -275,6 +275,10 @@ export default function AgentBuilderPage() {
   const autoSaveTimerRef = useRef(null)
   useEffect(() => {
     if (!activeWorkflowId) return
+    // Guard: only auto-save when this workflow is already loaded into the canvas.
+    // Without this, switching tabs fires this effect with stale nodes/edges from
+    // the previous workflow and corrupts the newly-activated one.
+    if (loadedWorkflowIdRef.current !== activeWorkflowId) return
     clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
       saveWorkflow(activeWorkflowId, { nodes, edges, subBlockValues })

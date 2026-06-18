@@ -292,6 +292,24 @@ export const MapperIcon = (p) => (
   </I>
 )
 
+export const ImagePreviewIcon = (p) => (
+  <I {...p}>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <polyline points="21,15 16,10 5,21" />
+  </I>
+)
+
+export const ImageBase64Icon = (p) => (
+  <I {...p}>
+    <rect x="3" y="2" width="13" height="10" rx="2" />
+    <circle cx="7" cy="6" r="1.5" />
+    <path d="M3 12l3-2.5 2 2 3-3.5 5 4" />
+    <polyline points="15,16 19,16 19,22" />
+    <line x1="9" y1="19" x2="19" y2="19" />
+  </I>
+)
+
 
 /** Colorful rocket deploy icon — dark blue stroke, light blue body, yellow window, red exhaust. */
 export const DeployIcon = ({ className, ...rest }) => (

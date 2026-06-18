@@ -178,8 +178,9 @@ function CanvasInner() {
   const importWorkflow = useWorkspaceStore((s) => s.importWorkflow)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const [jsonDropActive, setJsonDropActive] = useState(false) // overlay shown while dragging a JSON file
+  const [jsonDropSuccess, setJsonDropSuccess] = useState(false) // brief green flash before modal opens
   const [jsonDropPending, setJsonDropPending] = useState(null) // parsed workflow waiting for team pick
-  const [jsonDropError, setJsonDropError] = useState(null)
+  const [jsonDropError, setJsonDropError] = useState(null) // { message, filename } | null
   const jsonDropDepth = useRef(0) // track nested dragenter/leave for overlay visibility
 
   // Wire up block resolver for io-registry (avoids circular imports)
@@ -577,10 +578,16 @@ function CanvasInner() {
         reader.onload = (ev) => {
           const result = parseImportedWorkflowJSON(ev.target.result)
           if (result.ok) {
-            setJsonDropPending(result.workflow)
+            // Brief green-flash on the overlay, then open the import modal
+            setJsonDropSuccess(true)
+            setTimeout(() => {
+              setJsonDropSuccess(false)
+              setJsonDropActive(false)
+              setJsonDropPending(result.workflow)
+            }, 550)
           } else {
-            setJsonDropError(result.error)
-            setTimeout(() => setJsonDropError(null), 4000)
+            setJsonDropError({ message: result.error, filename: jsonFile.name })
+            setTimeout(() => setJsonDropError(null), 5000)
             // Also surface in Problems tab with full detail
             useWorkflowStore.getState().clearExtraProblems()
             useWorkflowStore.getState().addExtraProblem({
@@ -591,7 +598,7 @@ function CanvasInner() {
                 message: result.error,
                 blockType: 'import',
                 nodeTitle: 'Import',
-                cause: `The file "${jsonFile.name}" could not be parsed as a valid ConvEngine workflow JSON.`,
+                cause: `The file "${jsonFile.name}" could not be parsed as a valid CK8T workflow JSON.`,
                 hint: 'Make sure the JSON was exported from this builder. Expected format: { workflow: { nodes, edges, subBlockValues } }',
                 timestamp: new Date().toISOString(),
               },
@@ -811,24 +818,52 @@ function CanvasInner() {
     >
       {/* ── JSON drop overlay ── */}
       {jsonDropActive && (
-        <div className="bs-json-drop-overlay">
+        <div className={`bs-json-drop-overlay${jsonDropSuccess ? ' bs-drop-success' : ''}`}>
+          {/* Corner brackets — viewfinder effect */}
+          <span className="bs-drop-corner bs-drop-corner-tl" />
+          <span className="bs-drop-corner bs-drop-corner-tr" />
+          <span className="bs-drop-corner bs-drop-corner-bl" />
+          <span className="bs-drop-corner bs-drop-corner-br" />
           <div className="bs-json-drop-target">
             <div className="bs-json-drop-icon">
-              <svg viewBox="0 0 64 64" fill="none">
-                <circle cx="32" cy="32" r="30" stroke="currentColor" strokeWidth="2" strokeDasharray="6 4" className="bs-json-drop-ring"/>
-                <path d="M32 20v18M24 30l8 10 8-10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M22 44h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-              </svg>
+              {jsonDropSuccess ? (
+                <svg viewBox="0 0 64 64" fill="none">
+                  <circle cx="32" cy="32" r="30" stroke="currentColor" strokeWidth="2.5"/>
+                  <path d="M20 33l9 9 16-16" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              ) : (
+                <svg viewBox="0 0 64 64" fill="none">
+                  <circle cx="32" cy="32" r="30" stroke="currentColor" strokeWidth="2" strokeDasharray="6 4" className="bs-json-drop-ring"/>
+                  <path d="M32 20v18M24 30l8 10 8-10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M22 44h20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+                </svg>
+              )}
             </div>
-            <div className="bs-json-drop-label">Drop workflow JSON</div>
-            <div className="bs-json-drop-sub">ConvEngine builder studio export</div>
+            <div className="bs-json-drop-label">
+              {jsonDropSuccess ? 'Valid workflow — opening…' : 'Release to import'}
+            </div>
+            <div className="bs-json-drop-sub">
+              {jsonDropSuccess ? '' : 'CK8T workflow JSON'}
+            </div>
           </div>
         </div>
       )}
-      {/* ── JSON parse error toast ── */}
+      {/* ── JSON parse error banner ── */}
       {jsonDropError && (
-        <div className="bs-json-drop-error" onClick={() => setJsonDropError(null)}>
-          ⚠ {jsonDropError}
+        <div className="bs-json-drop-banner-error">
+          <svg className="bs-json-drop-banner-icon" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M10 6v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            <circle cx="10" cy="14.5" r="0.9" fill="currentColor"/>
+          </svg>
+          <div className="bs-json-drop-banner-body">
+            <span className="bs-json-drop-banner-title">Invalid workflow JSON</span>
+            {jsonDropError.filename && (
+              <span className="bs-json-drop-banner-file">{jsonDropError.filename}</span>
+            )}
+            <span className="bs-json-drop-banner-msg">{jsonDropError.message}</span>
+          </div>
+          <button className="bs-json-drop-banner-close" onClick={() => setJsonDropError(null)}>✕</button>
         </div>
       )}
       {/* ── Pan / Select mode toggle (top-left) ── */}

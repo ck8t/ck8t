@@ -46,3 +46,6 @@ export { SkillBlock } from './skill'
 export { ChainOfThoughtBlock } from './chain_of_thought'
 export { MasterAgentBlock } from './master_agent'
 export { SlaveAgentBlock } from './slave_agent'
+// Image utility blocks
+export { ImageUrlPreviewBlock } from './image_url_preview'
+export { ImageUrlToBase64Block } from './image_url_to_base64'

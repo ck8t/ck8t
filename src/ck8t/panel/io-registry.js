@@ -317,16 +317,9 @@ function deriveType(ioDefs) {
 /**
  * Build auto-derived ports from full block schema definitions.
  */
-function autoPorts(fullDefs, direction) {
+function autoPorts(fullDefs) {
   if (!fullDefs || Object.keys(fullDefs).length === 0) return []
-  const entries = Object.entries(fullDefs)
-
-  if (direction === 'input') {
-    // Single summary port for inputs
-    return [{ key: 'input', type: deriveType(fullDefs) }]
-  }
-  // Outputs: show each individually
-  return entries.map(([k, v]) => ({ key: k, type: v.type || 'any' }))
+  return Object.entries(fullDefs).map(([k, v]) => ({ key: k, type: v.type || 'any' }))
 }
 
 /**
@@ -339,12 +332,12 @@ export function getCardPorts(blockType, fullInputs, fullOutputs) {
   let inputs, outputs
 
   if (override) {
-    inputs = override.inputs === 'auto' ? autoPorts(fullInputs, 'input') : override.inputs
-    outputs = override.outputs === 'auto' ? autoPorts(fullOutputs, 'output') : override.outputs
+    inputs = override.inputs === 'auto' ? autoPorts(fullInputs) : override.inputs
+    outputs = override.outputs === 'auto' ? autoPorts(fullOutputs) : override.outputs
   } else {
     // No explicit override — fully auto-derive
-    inputs = autoPorts(fullInputs, 'input')
-    outputs = autoPorts(fullOutputs, 'output')
+    inputs = autoPorts(fullInputs)
+    outputs = autoPorts(fullOutputs)
   }
 
   return { inputs: inputs || [], outputs: outputs || [] }

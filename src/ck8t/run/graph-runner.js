@@ -549,6 +549,10 @@ async function runNode({ node, values, input, outputs, inputsByHandle, allNodes 
       // Preview-only sink — pass the upstream payload through untouched so
       // the card's json-preview body can render it (see WorkflowNode).
       return input
+    case 'image_url_preview':
+      return runImageUrlPreviewNode({ input })
+    case 'image_url_to_base64':
+      return await runImageUrlToBase64Node({ input })
     case 'json_map':
       return runJsonMapNode({ values, input })
     case 'text_template':
@@ -1391,6 +1395,10 @@ export function extractMediaUri(value) {
     return null
   }
   if (typeof value === 'object') {
+    // image_url_preview sentinel — renders external URL as <img> without download
+    if (typeof value.__ck8t_image_url === 'string') {
+      return { dataUri: value.__ck8t_image_url, mimeType: 'image/png', isExternalUrl: true }
+    }
     // Objects with known image fields
     for (const k of ['image', 'image_data', 'imageData', 'base64', 'data', 'content', 'pdf', 'file']) {
       if (value[k]) { const r = extractMediaUri(value[k]); if (r) return r }
@@ -1570,22 +1578,78 @@ async function runApiNode({ values, input, inputsByHandle }) {
   if (typeof values.headers === 'string') { try { headerEntries = JSON.parse(values.headers) } catch { headerEntries = [] } }
   const headers = {}
   for (const h of headerEntries) { if (h.Key) headers[h.Key] = substitute(String(h.Value ?? '')) }
+
+  // ── Authorization ───────────────────────────────────────────────────────────
+  const authType = String(values.authorization || 'none')
+  if (authType === 'bearer' && values.authToken) {
+    const token = substitute(String(values.authToken))
+    if (token && !headers['Authorization'] && !headers['authorization'])
+      headers['Authorization'] = `Bearer ${token}`
+  } else if (authType === 'api_key' && values.authApiKeyName && values.authApiKeyValue) {
+    const keyName = substitute(String(values.authApiKeyName))
+    const keyValue = substitute(String(values.authApiKeyValue))
+    const keyIn = String(values.authApiKeyIn || 'header')
+    if (keyName && keyValue) {
+      if (keyIn === 'query') {
+        url += (url.includes('?') ? '&' : '?') + encodeURIComponent(keyName) + '=' + encodeURIComponent(keyValue)
+      } else if (!headers[keyName]) {
+        headers[keyName] = keyValue
+      }
+    }
+  } else if (authType === 'basic' && values.authUsername) {
+    const creds = btoa(`${substitute(String(values.authUsername))}:${substitute(String(values.authPassword || ''))}`)
+    if (!headers['Authorization'] && !headers['authorization'])
+      headers['Authorization'] = `Basic ${creds}`
+  }
+
+  // ── Body ────────────────────────────────────────────────────────────────────
+  const contentTypeVal = String(values.contentType || 'application/json')
   let body
-  if (method !== 'GET' && method !== 'HEAD') {
-    // Priority: directly wired `body` handle > directly wired `input` handle > static `body` field with templating
-    if (inputsByHandle && inputsByHandle.body != null) {
-      const wb = inputsByHandle.body
-      body = typeof wb === 'string' ? wb : JSON.stringify(wb)
-      if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
-    } else if (inputsByHandle && inputsByHandle.input != null) {
-      const wi = inputsByHandle.input
-      body = typeof wi === 'string' ? wi : JSON.stringify(wi)
-      if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
+  if (method !== 'GET' && method !== 'HEAD' && contentTypeVal !== 'none') {
+    if (contentTypeVal === 'multipart/form-data') {
+      let formRows = Array.isArray(values.bodyFormData) ? values.bodyFormData : []
+      if (typeof values.bodyFormData === 'string') { try { formRows = JSON.parse(values.bodyFormData) } catch { formRows = [] } }
+      if (formRows.length > 0) {
+        const fd = new FormData()
+        for (const row of formRows) {
+          if (row[0]) fd.append(substitute(String(row[0])), substitute(String(row[1] ?? '')))
+        }
+        body = fd
+        // Let browser set Content-Type with the multipart boundary — remove any manual override
+        delete headers['Content-Type']
+        delete headers['content-type']
+      }
+    } else if (contentTypeVal === 'application/x-www-form-urlencoded') {
+      let formRows = Array.isArray(values.bodyFormData) ? values.bodyFormData : []
+      if (typeof values.bodyFormData === 'string') { try { formRows = JSON.parse(values.bodyFormData) } catch { formRows = [] } }
+      const qp = new URLSearchParams()
+      for (const row of formRows) {
+        if (row[0]) qp.append(substitute(String(row[0])), substitute(String(row[1] ?? '')))
+      }
+      body = qp.toString()
+      if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    } else if (contentTypeVal === 'text/plain') {
+      const rawText = substitute(String(values.bodyText || ''))
+      if (rawText.trim()) {
+        body = rawText
+        if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'text/plain'
+      }
     } else {
-      const rawBody = substitute(values.body)
-      if (typeof rawBody === 'string' && rawBody.trim()) {
-        body = rawBody
+      // application/json (default) — keep existing priority behaviour
+      if (inputsByHandle && inputsByHandle.body != null) {
+        const wb = inputsByHandle.body
+        body = typeof wb === 'string' ? wb : JSON.stringify(wb)
         if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
+      } else if (inputsByHandle && inputsByHandle.input != null) {
+        const wi = inputsByHandle.input
+        body = typeof wi === 'string' ? wi : JSON.stringify(wi)
+        if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
+      } else {
+        const rawBody = substitute(values.body)
+        if (typeof rawBody === 'string' && rawBody.trim()) {
+          body = rawBody
+          if (!headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
+        }
       }
     }
   }
@@ -1647,6 +1711,51 @@ async function runApiNode({ values, input, inputsByHandle }) {
   }
   const message = lastErr?.name === 'AbortError' ? `Request timed out after ${timeoutMs}ms` : (lastErr?.message || 'Request failed')
   return { data: null, status: 0, headers: {}, error: message }
+}
+
+// ── Image URL utilities ────────────────────────────────────────────────────────
+
+function _extractImageUrl(val) {
+  if (!val) return null
+  if (typeof val === 'string') return val.trim() || null
+  if (typeof val !== 'object') return null
+  // Ideogram response passed through api block's "data" handle:
+  //   api output.data = { data: [{ url }], response_type: "url" }
+  if (Array.isArray(val.data) && val.data.length > 0 && typeof val.data[0]?.url === 'string')
+    return val.data[0].url
+  // Full api block output (when "out" handle is used instead of "data"):
+  //   { data: { data: [{ url }] }, status, headers }
+  if (val.data && Array.isArray(val.data?.data) && typeof val.data.data[0]?.url === 'string')
+    return val.data.data[0].url
+  // Generic known URL fields
+  for (const k of ['url', 'image_url', 'imageUrl', 'src', 'image']) {
+    if (typeof val[k] === 'string') return val[k]
+  }
+  return null
+}
+
+function runImageUrlPreviewNode({ input }) {
+  const url = _extractImageUrl(input)
+  if (!url) return { url: null, error: 'No image URL found in input' }
+  // __ck8t_image_url is the sentinel picked up by extractMediaUri → SmartPreview
+  return { url, __ck8t_image_url: url }
+}
+
+async function runImageUrlToBase64Node({ input }) {
+  const url = _extractImageUrl(input)
+  if (!url) return { base64: null, mimeType: null, dataUri: null, error: 'No image URL found in input' }
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const contentType = resp.headers.get('content-type') || 'image/png'
+    const mimeType = contentType.split(';')[0].trim()
+    const buf = await resp.arrayBuffer()
+    const base64 = arrayBufferToBase64(buf)
+    const dataUri = `data:${mimeType};base64,${base64}`
+    return { base64, mimeType, dataUri, url }
+  } catch (err) {
+    return { base64: null, mimeType: null, dataUri: null, error: err.message }
+  }
 }
 
 async function runDelayNode({ values, input }) {

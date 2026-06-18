@@ -32,13 +32,107 @@ export const ApiBlock = defineCk8tBlock({
     },
     { id: 'params', title: 'Query Params', type: 'table', columns: ['Key', 'Value'] },
     { id: 'headers', title: 'Headers', type: 'table', columns: ['Key', 'Value'] },
+
+    // ── Authorization ──────────────────────────────────────────────────────────
+    {
+      id: 'authorization',
+      title: 'Authorization',
+      type: 'dropdown',
+      value: () => 'none',
+      options: [
+        { label: 'None', id: 'none' },
+        { label: 'Bearer Token', id: 'bearer' },
+        { label: 'API Key', id: 'api_key' },
+        { label: 'Basic Auth', id: 'basic' },
+      ],
+    },
+    {
+      id: 'authToken',
+      title: 'Token',
+      type: 'short-input',
+      placeholder: 'Enter bearer token',
+      condition: { field: 'authorization', value: 'bearer' },
+    },
+    {
+      id: 'authApiKeyName',
+      title: 'Key Name',
+      type: 'short-input',
+      placeholder: 'e.g. Api-Key, X-API-Key',
+      condition: { field: 'authorization', value: 'api_key' },
+    },
+    {
+      id: 'authApiKeyValue',
+      title: 'Key Value',
+      type: 'short-input',
+      placeholder: 'Enter key value',
+      condition: { field: 'authorization', value: 'api_key' },
+    },
+    {
+      id: 'authApiKeyIn',
+      title: 'Send In',
+      type: 'dropdown',
+      value: () => 'header',
+      options: [
+        { label: 'Header', id: 'header' },
+        { label: 'Query Param', id: 'query' },
+      ],
+      condition: { field: 'authorization', value: 'api_key' },
+    },
+    {
+      id: 'authUsername',
+      title: 'Username',
+      type: 'short-input',
+      placeholder: 'Username',
+      condition: { field: 'authorization', value: 'basic' },
+    },
+    {
+      id: 'authPassword',
+      title: 'Password',
+      type: 'short-input',
+      placeholder: 'Password',
+      password: true,
+      condition: { field: 'authorization', value: 'basic' },
+    },
+
+    // ── Body ──────────────────────────────────────────────────────────────────
+    {
+      id: 'contentType',
+      title: 'Body Type',
+      type: 'dropdown',
+      value: () => 'application/json',
+      options: [
+        { label: 'JSON (application/json)', id: 'application/json' },
+        { label: 'Form Data (multipart/form-data)', id: 'multipart/form-data' },
+        { label: 'URL Encoded (application/x-www-form-urlencoded)', id: 'application/x-www-form-urlencoded' },
+        { label: 'Text (text/plain)', id: 'text/plain' },
+        { label: 'None', id: 'none' },
+      ],
+    },
     {
       id: 'body',
       title: 'Body',
       type: 'code',
       placeholder: 'Enter JSON...',
       language: 'json',
+      // Show body JSON editor when contentType is explicitly json OR when it hasn't
+      // been set yet (backwards-compat: existing blocks that predate the contentType field).
+      condition: (v) => !v.contentType || v.contentType === 'application/json',
     },
+    {
+      id: 'bodyFormData',
+      title: 'Form Fields',
+      type: 'table',
+      columns: ['Key', 'Value'],
+      condition: { field: 'contentType', value: ['multipart/form-data', 'application/x-www-form-urlencoded'] },
+    },
+    {
+      id: 'bodyText',
+      title: 'Body',
+      type: 'long-input',
+      placeholder: 'Enter text...',
+      condition: { field: 'contentType', value: 'text/plain' },
+    },
+
     {
       id: 'timeout',
       title: 'Timeout (ms)',
@@ -73,8 +167,14 @@ export const ApiBlock = defineCk8tBlock({
     url: { type: 'string', description: 'Request URL' },
     method: { type: 'string', description: 'HTTP method' },
     headers: { type: 'json', description: 'Request headers' },
-    body: { type: 'json', description: 'Request body data' },
+    body: { type: 'json', description: 'Request body (JSON mode)' },
+    bodyFormData: { type: 'json', description: 'Form fields (form-data or url-encoded mode)' },
     params: { type: 'json', description: 'URL query parameters' },
+    authorization: { type: 'string', description: 'Authorization type (none/bearer/api_key/basic)' },
+    authToken: { type: 'string', description: 'Bearer token' },
+    authApiKeyName: { type: 'string', description: 'API key header or query param name' },
+    authApiKeyValue: { type: 'string', description: 'API key value' },
+    contentType: { type: 'string', description: 'Body content type' },
     timeout: { type: 'number', description: 'Request timeout in milliseconds' },
     retries: { type: 'number', description: 'Number of retry attempts' },
     retryDelayMs: { type: 'number', description: 'Initial retry delay' },

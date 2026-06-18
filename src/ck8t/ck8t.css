@@ -7863,61 +7863,112 @@ button.bs-palette-group-toggle:hover {
 [data-theme="light"] .bs-inspect-kv-key { color: #6d28d9; }
 
 /* ============================================================
- * JSON Import — drag-drop overlay, drop target, error toast,
+ * JSON Import — drag-drop overlay, drop target, error banner,
  * import modal icon, rail import button, error toast in SideNav
  * ============================================================ */
 
-/* Canvas drop overlay (shown while dragging a JSON file over canvas) */
+/* ── Keyframes ── */
 @keyframes bs-drop-ring-spin {
   to { stroke-dashoffset: -28; }
 }
-@keyframes bs-drop-target-pulse {
-  0%, 100% { transform: scale(1);   opacity: 1; }
-  50%       { transform: scale(1.06); opacity: 0.85; }
+@keyframes bs-drop-overlay-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
 }
-@keyframes bs-drop-bg-flicker {
-  0%, 100% { opacity: 0.88; }
-  50%       { opacity: 0.96; }
+@keyframes bs-drop-target-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.05); opacity: 0.88; }
 }
 @keyframes bs-drop-icon-float {
   0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-6px); }
+  50%       { transform: translateY(-7px); }
+}
+@keyframes bs-drop-corner-flash {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 1; }
+}
+@keyframes bs-drop-success-in {
+  0%   { background: rgba(99, 102, 241, 0.10); }
+  100% { background: rgba(16, 185, 129, 0.15); }
+}
+@keyframes bs-drop-success-icon {
+  0%   { transform: scale(0.7); opacity: 0; }
+  60%  { transform: scale(1.12); }
+  100% { transform: scale(1);   opacity: 1; }
+}
+@keyframes bs-banner-in {
+  from { transform: translateY(-110%); opacity: 0; }
+  to   { transform: translateY(0);      opacity: 1; }
+}
+@keyframes bs-toast-in {
+  from { transform: translateX(-50%) translateY(12px); opacity: 0; }
+  to   { transform: translateX(-50%) translateY(0);   opacity: 1; }
 }
 
+/* ── Drop overlay ── */
 .bs-json-drop-overlay {
   position: absolute;
-  inset: 0;
+  inset: 8px;
   z-index: 9999;
   pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(99, 102, 241, 0.10);
-  backdrop-filter: blur(3px);
-  border: 2.5px dashed #818cf8;
-  border-radius: 12px;
-  animation: bs-drop-bg-flicker 1.6s ease-in-out infinite;
+  background: rgba(99, 102, 241, 0.09);
+  backdrop-filter: blur(4px);
+  border: 2px dashed rgba(129, 140, 248, 0.7);
+  border-radius: 14px;
+  animation: bs-drop-overlay-in 0.2s ease-out both;
+  transition: background 0.35s ease, border-color 0.35s ease;
 }
 
+/* Success state — green flash */
+.bs-json-drop-overlay.bs-drop-success {
+  background: rgba(16, 185, 129, 0.13);
+  border-color: #34d399;
+  border-style: solid;
+  animation: bs-drop-success-in 0.35s ease forwards;
+}
+.bs-json-drop-overlay.bs-drop-success .bs-json-drop-icon { color: #34d399; }
+.bs-json-drop-overlay.bs-drop-success .bs-json-drop-icon svg {
+  animation: bs-drop-success-icon 0.4s ease both;
+}
+.bs-json-drop-overlay.bs-drop-success .bs-json-drop-label { color: #6ee7b7; }
+.bs-json-drop-overlay.bs-drop-success .bs-drop-corner { border-color: #34d399; }
+
+/* ── Corner bracket "viewfinder" marks ── */
+.bs-drop-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-color: #818cf8;
+  border-style: solid;
+  border-width: 0;
+  animation: bs-drop-corner-flash 1.4s ease-in-out infinite;
+}
+.bs-drop-corner-tl { top: 10px;    left: 10px;    border-top-width: 2.5px; border-left-width: 2.5px;   border-radius: 4px 0 0 0; }
+.bs-drop-corner-tr { top: 10px;    right: 10px;   border-top-width: 2.5px; border-right-width: 2.5px;  border-radius: 0 4px 0 0; }
+.bs-drop-corner-bl { bottom: 10px; left: 10px;    border-bottom-width: 2.5px; border-left-width: 2.5px;  border-radius: 0 0 0 4px; }
+.bs-drop-corner-br { bottom: 10px; right: 10px;   border-bottom-width: 2.5px; border-right-width: 2.5px; border-radius: 0 0 4px 0; }
+
+/* ── Drop target (centered content) ── */
 .bs-json-drop-target {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  animation: bs-drop-target-pulse 1.6s ease-in-out infinite;
+  animation: bs-drop-target-pulse 1.8s ease-in-out infinite;
 }
 
 .bs-json-drop-icon {
-  width: 80px;
-  height: 80px;
+  width: 76px;
+  height: 76px;
   color: #818cf8;
-  animation: bs-drop-icon-float 1.8s ease-in-out infinite;
+  animation: bs-drop-icon-float 2s ease-in-out infinite;
 }
 .bs-json-drop-icon svg { width: 100%; height: 100%; }
 
-.bs-json-drop-ring {
-  animation: bs-drop-ring-spin 2.4s linear infinite;
-}
+.bs-json-drop-ring { animation: bs-drop-ring-spin 2.4s linear infinite; }
 
 .bs-json-drop-label {
   font-size: 1.05rem;
@@ -7926,38 +7977,87 @@ button.bs-palette-group-toggle:hover {
   letter-spacing: 0.01em;
 }
 .bs-json-drop-sub {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   color: #818cf8;
-  opacity: 0.8;
+  opacity: 0.75;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
-/* Flash border on the canvas wrapper when JSON file enters */
+/* Flash border on the canvas wrapper */
 .bs-canvas-json-drag {
-  outline: 2.5px dashed #818cf8 !important;
+  outline: 2px dashed rgba(129, 140, 248, 0.5) !important;
   outline-offset: -2px;
 }
 
-/* Error toast (canvas) */
-@keyframes bs-toast-in {
-  from { transform: translateX(-50%) translateY(12px); opacity: 0; }
-  to   { transform: translateX(-50%) translateY(0);   opacity: 1; }
-}
-.bs-json-drop-error {
+/* ── Error banner (top of canvas, full-width) ── */
+.bs-json-drop-banner-error {
   position: absolute;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 10000;
-  background: #1e293b;
-  border: 1px solid #f87171;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  background: linear-gradient(90deg, rgba(30,10,10,0.97) 0%, rgba(40,12,12,0.97) 100%);
+  border-bottom: 1.5px solid rgba(248, 113, 113, 0.5);
   color: #fca5a5;
   font-size: 0.82rem;
-  padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  animation: bs-toast-in 0.25s ease;
+  animation: bs-banner-in 0.22s ease-out both;
+  pointer-events: all;
+}
+.bs-json-drop-banner-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: #f87171;
+}
+.bs-json-drop-banner-body {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.bs-json-drop-banner-title {
+  font-weight: 600;
+  color: #f87171;
   white-space: nowrap;
 }
+.bs-json-drop-banner-file {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  color: #fda4a4;
+  background: rgba(248,113,113,0.1);
+  padding: 0 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bs-json-drop-banner-msg {
+  color: #fca5a5;
+  opacity: 0.85;
+  word-break: break-word;
+}
+.bs-json-drop-banner-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #f87171;
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.7;
+  line-height: 1;
+  align-self: center;
+}
+.bs-json-drop-banner-close:hover { opacity: 1; }
 
 /* Error toast in SideNav */
 .bs-import-error-toast {
@@ -8007,13 +8107,23 @@ button.bs-palette-group-toggle:hover {
 
 /* Light theme overrides for overlay/toasts */
 [data-theme='light'] .bs-json-drop-overlay {
-  background: rgba(99, 102, 241, 0.07);
+  background: rgba(99, 102, 241, 0.06);
   border-color: #6366f1;
 }
 [data-theme='light'] .bs-json-drop-label { color: #4338ca; }
 [data-theme='light'] .bs-json-drop-sub   { color: #6366f1; }
 [data-theme='light'] .bs-json-drop-icon  { color: #6366f1; }
-[data-theme='light'] .bs-json-drop-error,
+[data-theme='light'] .bs-drop-corner     { border-color: #6366f1; }
+[data-theme='light'] .bs-json-drop-banner-error {
+  background: linear-gradient(90deg, #fff5f5 0%, #fff1f1 100%);
+  border-bottom-color: rgba(220, 38, 38, 0.3);
+  color: #dc2626;
+}
+[data-theme='light'] .bs-json-drop-banner-title { color: #dc2626; }
+[data-theme='light'] .bs-json-drop-banner-icon  { color: #dc2626; }
+[data-theme='light'] .bs-json-drop-banner-file  { color: #b91c1c; background: rgba(220,38,38,0.07); }
+[data-theme='light'] .bs-json-drop-banner-msg   { color: #dc2626; }
+[data-theme='light'] .bs-json-drop-banner-close { color: #dc2626; }
 [data-theme='light'] .bs-import-error-toast {
   background: #fff;
   border-color: #f87171;
