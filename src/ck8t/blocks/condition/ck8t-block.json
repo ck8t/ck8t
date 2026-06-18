@@ -1,0 +1,8 @@
+{
+  "id": "condition",
+  "name": "Condition",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "condition", "ui": "ui/condition.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

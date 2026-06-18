@@ -1,0 +1,8 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "slack", "ui": "ui/slack.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

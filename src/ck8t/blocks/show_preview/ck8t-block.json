@@ -1,0 +1,8 @@
+{
+  "id": "show_preview",
+  "name": "Show Preview",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "show_preview", "ui": "ui/show_preview.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

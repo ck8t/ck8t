@@ -6,10 +6,11 @@
  *
  * Each level has trash + open icons.
  */
-import { useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import { useTabsStore, agentTabId, skillTabId } from '../stores/tabs-store'
+import { useTabsStore, agentTabId, skillTabId, teamTabId } from '../stores/tabs-store'
 import ConfirmModal from '../components/ConfirmModal'
+import { entityColor } from '../components/CreateWorkflowModal'
 import {
   TeamsIcon,
   AgentsIcon,
@@ -61,6 +62,7 @@ export default function TeamEditor({ teamId }) {
 
   const openTab         = useTabsStore((s) => s.openTab)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
+  const closeTab        = useTabsStore((s) => s.closeTab)
 
   const team = useMemo(() => teams.find((t) => t.id === teamId), [teams, teamId])
   const pools = useMemo(
@@ -68,7 +70,9 @@ export default function TeamEditor({ teamId }) {
     [allPools, teamId]
   )
   const workflows = useMemo(
-    () => allWorkflows.filter((w) => w.teamId === teamId),
+    () => allWorkflows.filter((w) =>
+      (w.teamIds?.includes(teamId)) || (w.teamId === teamId)
+    ),
     [allWorkflows, teamId]
   )
 
@@ -101,19 +105,43 @@ export default function TeamEditor({ teamId }) {
     openTab({ id: skillTabId(sk.id), kind: 'skill', entityId: sk.id, title: sk.name })
   }, [openTab])
 
-  if (!team) return <div className="bs-editor-empty">Team not found.</div>
+  // Auto-close tab when team is deleted
+  useEffect(() => {
+    if (!team) closeTab(teamTabId(teamId))
+  }, [team, closeTab, teamId])
+
+  if (!team) return null
+
+  const heroColor = team.color || entityColor(team.id)
 
   return (
     <div className="bs-editor">
-      <header className="bs-editor-head">
-        <TeamsIcon className="bs-editor-ico" />
-        <div className="bs-editor-heading">
-          <div className="bs-editor-title">{team.name}</div>
-          <div className="bs-editor-sub">
-            {pools.length} pool{pools.length === 1 ? '' : 's'} · {totalAgents} agent{totalAgents === 1 ? '' : 's'} · {workflows.length} workflow{workflows.length === 1 ? '' : 's'}
+      <div className="bs-entity-hero" style={{ '--ehc': heroColor }}>
+        <div className="bs-entity-hero-bg" />
+        <div className="bs-entity-hero-content">
+          <div className="bs-entity-hero-avatar">
+            <TeamsIcon style={{ width: 16, height: 16, color: '#fff' }} />
           </div>
+          <div className="bs-entity-hero-info">
+            <div className="bs-entity-hero-title">{team.name}</div>
+            <div className="bs-entity-hero-stats">
+              <span className="bs-entity-hero-stat">
+                <span className="bs-entity-hero-stat-dot" />
+                {pools.length} pool{pools.length === 1 ? '' : 's'}
+              </span>
+              <span className="bs-entity-hero-stat">
+                <span className="bs-entity-hero-stat-dot" />
+                {totalAgents} agent{totalAgents === 1 ? '' : 's'}
+              </span>
+              <span className="bs-entity-hero-stat">
+                <span className="bs-entity-hero-stat-dot" />
+                {workflows.length} workflow{workflows.length === 1 ? '' : 's'}
+              </span>
+            </div>
+          </div>
+          <span className="bs-entity-hero-badge">Team</span>
         </div>
-      </header>
+      </div>
 
       <section className="bs-editor-section">
         <label className="bs-label">Team name</label>

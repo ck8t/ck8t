@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useTabsStore, workflowIdFromTab } from '../stores/tabs-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { entityColor } from '../components/CreateWorkflowModal'
 import Canvas from '../canvas/Canvas'
 import AgentEditor from './AgentEditor'
 import SkillEditor from './SkillEditor'
@@ -85,10 +86,12 @@ export default function CenterPane() {
               role="tab"
               aria-selected={isActive}
               className={`bs-tab ${isActive ? 'is-active' : ''} ${pinned ? 'is-pinned' : ''}`}
+              style={{ '--tc': entityColor(t.entityId || t.id) }}
               onClick={() => setActive(t.id)}
               onAuxClick={(e) => { if (e.button === 1) closeTab(t.id) }}
               onContextMenu={(e) => handleTabContextMenu(e, t)}
             >
+              <span className="bs-tab-dot" />
               <Icon className="bs-ico-xs" />
               <span className="bs-tab-label">{t.title}</span>
               <span

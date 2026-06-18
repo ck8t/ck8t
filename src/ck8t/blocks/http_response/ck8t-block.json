@@ -1,0 +1,8 @@
+{
+  "id": "http_response",
+  "name": "Http Response",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "http_response", "ui": "ui/http_response.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

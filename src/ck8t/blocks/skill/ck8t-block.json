@@ -1,0 +1,7 @@
+{
+  "id": "skill",
+  "name": "Skill",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "skill", "ui": "ui/skill.js" }]
+}

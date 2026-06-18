@@ -1,0 +1,8 @@
+{
+  "id": "wait",
+  "name": "Wait",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "wait", "ui": "ui/wait.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

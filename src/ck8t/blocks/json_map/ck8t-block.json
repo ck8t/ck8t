@@ -1,0 +1,8 @@
+{
+  "id": "json_map",
+  "name": "Json Map",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "json_map", "ui": "ui/json_map.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

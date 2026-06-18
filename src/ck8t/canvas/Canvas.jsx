@@ -175,6 +175,7 @@ function CanvasInner() {
 
   // ── JSON drag-drop import state ──────────────────────────────────────────
   const teams = useWorkspaceStore((s) => s.teams)
+  const workflowFolders = useWorkspaceStore((s) => s.workflowFolders || [])
   const importWorkflow = useWorkspaceStore((s) => s.importWorkflow)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const [jsonDropActive, setJsonDropActive] = useState(false) // overlay shown while dragging a JSON file
@@ -403,6 +404,8 @@ function CanvasInner() {
                     id:             activeWorkflow.id,
                     name:           activeWorkflow.name,
                     teamId:         activeWorkflow.teamId || null,
+                    teamIds:        activeWorkflow.teamIds || (activeWorkflow.teamId ? [activeWorkflow.teamId] : []),
+                    folderId:       activeWorkflow.folderId || null,
                     nodes:          cleanNodes,
                     edges:          cleanEdges,
                     subBlockValues,
@@ -633,12 +636,13 @@ function CanvasInner() {
     [addNode, screenToFlowPosition, tryMasterSlaveRegister]
   )
 
-  function handleJsonDropConfirm(name, teamId) {
+  function handleJsonDropConfirm(name, teamIds, folderId) {
     if (!jsonDropPending) return
-    const wf = importWorkflow(name, teamId, {
+    const wf = importWorkflow(name, teamIds, {
       nodes: jsonDropPending.nodes,
       edges: jsonDropPending.edges,
       subBlockValues: jsonDropPending.subBlockValues,
+      folderId,
     })
     openWorkflowTab(wf.id, wf.name)
     setJsonDropPending(null)
@@ -1033,8 +1037,10 @@ function CanvasInner() {
       {jsonDropPending && (
         <ImportWorkflowModal
           teams={teams}
+          folders={workflowFolders}
           defaultName={jsonDropPending.name}
-          defaultTeamId={teams[0]?.id}
+          defaultTeamIds={teams[0] ? [teams[0].id] : []}
+          defaultFolderId={workflowFolders?.[0]?.id || null}
           onCancel={() => setJsonDropPending(null)}
           onImport={handleJsonDropConfirm}
         />

@@ -1,0 +1,7 @@
+{
+  "id": "sub_workflow",
+  "name": "Sub Workflow",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "sub_workflow", "ui": "ui/sub_workflow.js" }]
+}

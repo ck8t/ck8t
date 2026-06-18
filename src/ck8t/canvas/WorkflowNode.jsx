@@ -24,6 +24,8 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useMcpStore } from '../mcp/mcp-store'
 import { useMcpProgressStore } from '../stores/mcp-progress-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
+import { useBlockDebugStore } from '../stores/block-debug-store'
+import { useBlockDebuggerStore } from '../debug/block-debugger-store'
 import { getBlock } from '../blocks/registry'
 import { getTypeColor, getCardPorts, getAllPortTypes, isTypeCompatible } from '../panel/io-registry'
 import { useTabsStore, skillTabId } from '../stores/tabs-store'
@@ -304,6 +306,9 @@ function WorkflowNode({ id, data, selected }) {
   const isDisabled = !!data.disabled
   // Disabled nodes are never flagged for missing config — they're bypassed at runtime
   const isInvalidInput = !isDisabled && (invalidInputNodeIds?.has?.(id) ?? false)
+  const isDebugMode = useBlockDebugStore((s) => s.debugEnabled.has(id))
+  const toggleDebug = useBlockDebugStore((s) => s.toggleDebug)
+  const openDebugger = useBlockDebuggerStore((s) => s.openDebugger)
   const isUnconnected = hasNoIncoming
   const cfg = getBlock(data.blockType)
   const Icon = data.icon || cfg?.icon
@@ -594,6 +599,17 @@ function WorkflowNode({ id, data, selected }) {
           </>
         )}
 
+        {/* ── Debug mode badge ── */}
+        {isDebugMode && (
+          <div className="bs-node-debug-badge" title="Debug mode enabled — breakpoints captured on next run">
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="5" y="5" width="6" height="8" rx="3" />
+              <path d="M8 1v4" /><path d="M3 7h2" /><path d="M11 7h2" /><path d="M3 11h2" /><path d="M11 11h2" />
+            </svg>
+            DBG
+          </div>
+        )}
+
         {/* ── Disabled overlay (ComfyUI-style full-card, toggled via ⌘B) ── */}
         {isDisabled && (
           <div className="bs-node-disabled-overlay">
@@ -850,7 +866,6 @@ function WorkflowNode({ id, data, selected }) {
             {outputHandles.map((h) => (
               <div key={h} className="bs-port-row bs-port-row-out">
                 <span className={`bs-port-branch-label bs-port-branch-${safeHandleColor(h)}`}>{h}</span>
-                <span className={`bs-port-dot bs-port-dot-${safeHandleColor(h)}`} />
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -879,6 +894,8 @@ function WorkflowNode({ id, data, selected }) {
             { id: 'rename', label: 'Rename', icon: CtxRenameIcon, iconColor: '#fbbf24', shortcut: 'F2', onSelect: () => setEditing(true) },
             { id: 'dup', label: 'Duplicate', icon: CtxDuplicateIcon, iconColor: '#22d3ee', shortcut: '⌘D', onSelect: () => duplicateNode(id) },
             { id: 'inspect', label: 'Inspect', icon: CtxInspectIcon, iconColor: '#22d3ee', shortcut: '⌘I', disabled: !traceEntry, onSelect: () => setInspectOpen(true) },
+            { id: 'debugger', label: 'Debug Block', icon: CtxDebugIcon, iconColor: '#f59e0b', onSelect: () => openDebugger(id, data?.blockType, data?.title) },
+            { id: 'debug', label: isDebugMode ? 'Disable Debug Mode' : 'Enable Debug Mode', icon: CtxDebugIcon, iconColor: isDebugMode ? '#f97316' : '#a3e635', onSelect: () => toggleDebug(id) },
             { id: 'resize', label: resizeMode ? 'Lock Size' : 'Resize', icon: CtxResizeIcon, iconColor: '#a78bfa', onSelect: () => setResizeMode((v) => !v) },
             { id: 'fit', label: 'Fit to Content', icon: CtxResizeIcon, iconColor: '#a78bfa', disabled: !nodeH, onSelect: () => { setNodeH(undefined); fitNodeStore(id) } },
             { separator: true },
@@ -1495,6 +1512,9 @@ function CtxCopyIcon(props) {
 }
 function CtxInspectIcon(props) {
   return <svg {...svgProps} {...props}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+}
+function CtxDebugIcon(props) {
+  return <svg {...svgProps} {...props}><rect x="9" y="9" width="6" height="8" rx="3" /><path d="M12 3v6" /><path d="M6 11h3" /><path d="M15 11h3" /><path d="M6 15h3" /><path d="M15 15h3" /></svg>
 }
 
 export default memo(WorkflowNode)

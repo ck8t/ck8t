@@ -1,0 +1,8 @@
+{
+  "id": "response",
+  "name": "Response",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "response", "ui": "ui/response.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

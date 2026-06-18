@@ -5,6 +5,25 @@
 import { useState } from 'react'
 import ErrorDetailView from './ErrorDetailView'
 
+function CopyBtn({ text }) {
+  const [done, setDone] = useState(false)
+  function copy(e) {
+    e.stopPropagation()
+    navigator.clipboard?.writeText(text).then(() => {
+      setDone(true)
+      setTimeout(() => setDone(false), 1200)
+    })
+  }
+  return (
+    <button className={`bs-copy-btn${done ? ' is-done' : ''}`} title="Copy" onClick={copy} type="button">
+      {done
+        ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      }
+    </button>
+  )
+}
+
 const ProblemsPanel = {
   id: 'problems',
   label: 'Problems',
@@ -62,6 +81,7 @@ function ProblemRow({ problem: p }) {
         </span>
         <span className="bs-problem-node">{p.node || '—'}</span>
         <span className="bs-problem-msg">{p.message}</span>
+        <CopyBtn text={`[${p.severity}] ${p.node || '—'}: ${p.message}`} />
       </div>
       {open && hasDetail && (
         <div className="bs-problem-detail">
@@ -142,6 +162,8 @@ function collectProblems(ctx) {
 
   // ── Static validation ─────────────────────────────────────────────────
   const SEED_TYPES = new Set(['starter', 'user_input', 'webhook_request', 'schedule'])
+  // slave_agent is dispatched programmatically by master_agent — no incoming edges by design
+  const EXEMPT_TYPES = new Set(['slave_agent'])
 
   // 1. Explicitly disabled nodes (⌘B toggled) — always shown regardless of edges
   nodes.forEach((n) => {
@@ -159,6 +181,7 @@ function collectProblems(ctx) {
   edges.forEach((e) => targetIds.add(e.target))
   nodes.forEach((n) => {
     if (SEED_TYPES.has(n.data?.blockType)) return
+    if (EXEMPT_TYPES.has(n.data?.blockType)) return
     if (n.data?.disabled) return
     if (!targetIds.has(n.id) && nodes.length > 1) {
       problems.push({

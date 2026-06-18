@@ -8,6 +8,7 @@
  *  1. src/index.css  — Tailwind + global CSS vars (light/dark tokens)
  *  2. ck8t.css — bs-* prefixed component styles
  */
+import '@salilvnair/dui/monaco-setup';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '../src/index.css';

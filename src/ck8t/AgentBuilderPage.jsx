@@ -30,6 +30,7 @@ import { logUiEvent } from './audit/ui-audit-store'
 import { flushSnapshot } from './stores/snapshot'
 import { useUiStateStore } from './stores/ui-state-store'
 import McpProgressOverlay from './components/McpProgressOverlay'
+import { BlockDebuggerPopup } from './debug/BlockDebuggerPopup'
 import './ck8t.css'
 
 const R_MIN = 280
@@ -45,6 +46,7 @@ export default function AgentBuilderPage() {
   const createWorkflow = useWorkspaceStore((s) => s.createWorkflow)
   const renameWorkflow = useWorkspaceStore((s) => s.renameWorkflow)
   const teams = useWorkspaceStore((s) => s.teams)
+  const workflowFolders = useWorkspaceStore((s) => s.workflowFolders || [])
   const setLlmConfig = useLlmConfigStore((s) => s.setConfig)
   const [editingName, setEditingName] = useState(false)
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow)
@@ -572,9 +574,11 @@ export default function AgentBuilderPage() {
       {newWorkflowOpen && (
         <CreateWorkflowModal
           teams={teams}
+          folders={workflowFolders}
+          defaultFolderId={workflowFolders?.[0]?.id || null}
           onCancel={() => setNewWorkflowOpen(false)}
-          onCreate={(name, teamId) => {
-            const wf = createWorkflow(name, teamId)
+          onCreate={(name, teamIds, folderId) => {
+            const wf = createWorkflow(name, teamIds, { folderId })
             logUiEvent('workflow.new', { name })
             openWorkflowTab(wf.id, wf.name)
             setNewWorkflowOpen(false)
@@ -583,6 +587,7 @@ export default function AgentBuilderPage() {
       )}
 
       <McpProgressOverlay />
+      <BlockDebuggerPopup />
     </div>
   )
 }

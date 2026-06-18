@@ -1,0 +1,8 @@
+{
+  "id": "text_template",
+  "name": "Text Template",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "text_template", "ui": "ui/text_template.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

@@ -28,6 +28,7 @@ import { useAiProvidersStore, getAiProviderModelOptions } from '../stores/ai-pro
 import { resolvePortType, isTypeCompatible, getCardPorts } from '../panel/io-registry'
 import { getBlock, customBrowserBlockRunners } from '../blocks/registry'
 import { useMcpProgressStore } from '../stores/mcp-progress-store'
+import { useBlockDebugStore } from '../stores/block-debug-store'
 
 // Validate a runtime value against a declared port type.
 // Returns an error string if mismatch, or null if OK.
@@ -100,9 +101,13 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
   const nodesById = Object.fromEntries(nodes.map((n) => [n.id, n]))
 
   // ── Validate: non-seed nodes must be reachable from Start ────────────
+  // slave_agent blocks are dispatched programmatically by master_agent — they have no
+  // incoming edges by design and must be exempt from the reachability validation.
+  const EXEMPT_BLOCK_TYPES = new Set(['slave_agent'])
   const seedTypes = SEED_BLOCK_TYPES
   for (const n of nodes) {
     if (seedTypes.has(n.data?.blockType)) continue
+    if (EXEMPT_BLOCK_TYPES.has(n.data?.blockType)) continue
     if (disabledIds.has(n.id)) continue
     if (!reachable.has(n.id)) {
       const title = n.data?.title || n.data?.blockType || n.id
@@ -530,17 +535,22 @@ async function runNode({ node, values, input, outputs, inputsByHandle, allNodes 
     case 'mcp':
       return await runMcpNode({ values, input })
     case 'function':
-      return runFunctionNode({ values, input })
+      return runFunctionNode({ values, input, nodeId: node.id })
     case 'if_else':
       return runIfElseNode({ values, input })
     case 'if_elseif_else':
       return runIfElseIfElseNode({ values, input })
     case 'switch':
       return runSwitchNode({ values, input })
-    case 'for_loop':
-      throw new Error('For Loop block: loop expansion is not supported in client-side execution. Connect to the convengine backend to run loop blocks.')
-    case 'for_each':
-      throw new Error('For Each block: loop iteration is not supported in client-side execution. Connect to the convengine backend to run for-each blocks.')
+    case 'for_loop': {
+      const count = Math.max(0, Math.min(10000, Number(values.count ?? 10)))
+      const iterations = Array.from({ length: count }, (_, i) => ({ i, index: i }))
+      return { iterations, last: count > 0 ? iterations[count - 1] : null }
+    }
+    case 'for_each': {
+      const arr = Array.isArray(input) ? input : (input != null ? [input] : [])
+      return { iterations: arr, last: arr.length > 0 ? arr[arr.length - 1] : null }
+    }
     case 'json_validator':
       return runJsonValidator({ values, input })
     case 'save_to_files':
@@ -610,21 +620,25 @@ async function runNode({ node, values, input, outputs, inputsByHandle, allNodes 
     case 'ns9_ingest':
       return await runNs9IngestBlock({ values })
     case 'loop':
-      throw new Error('Loop block: loop execution is not supported in client-side execution. Connect to the convengine backend to run loop blocks.')
-    case 'parallel':
-      throw new Error('Parallel block: parallel branch execution requires convengine server-side execution. Connect to the convengine backend to run parallel blocks.')
+      throw new Error('Loop block: not yet supported in standalone client-side execution. Use for_loop or for_each blocks for iteration.')
+    case 'parallel': {
+      // Client-side: parallel block is a pass-through trigger.
+      // True concurrent fan-out is handled by the graph executor BFS naturally.
+      const results = input != null ? [input] : []
+      return { results, winner: input ?? null }
+    }
     case 'table':
-      throw new Error('Table block: requires a database connection via convengine server-side execution. Connect to the convengine backend to use table blocks.')
+      throw new Error('Table block: not yet supported in standalone mode. Use the api or postgresql blocks to query data.')
     case 'slack':
-      throw new Error('Slack block requires server-side execution via convengine. Connect to the convengine backend to send Slack messages.')
+      throw new Error('Slack block: not yet supported in standalone mode. Slack integration is planned — see todo.md for details.')
     case 'smtp':
-      throw new Error('SMTP block requires server-side execution via convengine. Connect to the convengine backend to send emails.')
+      throw new Error('SMTP block: not yet supported in standalone mode. Direct SMTP support is planned.')
     case 'postgresql':
-      throw new Error('PostgreSQL block requires server-side execution via convengine. Connect to the convengine backend to query your database.')
+      throw new Error('PostgreSQL block: not yet supported in standalone mode. Configure host/credentials and check the ck8t-server bridge.')
     case 'redis':
-      throw new Error('Redis block requires server-side execution via convengine. Connect to the convengine backend to use Redis.')
+      throw new Error('Redis block: not yet supported in standalone mode. Direct Redis support is planned.')
     case 'mongodb':
-      throw new Error('MongoDB block requires server-side execution via convengine. Connect to the convengine backend to query MongoDB.')
+      throw new Error('MongoDB block: not yet supported in standalone mode. Direct MongoDB support is planned.')
     case 'schedule':
       return { firedAt: new Date().toISOString() }
     case 'webhook_request':
@@ -1314,11 +1328,42 @@ async function runMcpNode({ values, input }) {
   return resp?.result
 }
 
-function runFunctionNode({ values, input }) {
+function runFunctionNode({ values, input, nodeId }) {
   const src = values.code || 'return input'
+  const logs = []
+  const capture = {
+    log:   (...a) => logs.push({ level: 'log',   msg: a.map(serializeArg).join(' ') }),
+    info:  (...a) => logs.push({ level: 'info',  msg: a.map(serializeArg).join(' ') }),
+    warn:  (...a) => logs.push({ level: 'warn',  msg: a.map(serializeArg).join(' ') }),
+    error: (...a) => logs.push({ level: 'error', msg: a.map(serializeArg).join(' ') }),
+    debug: (...a) => logs.push({ level: 'debug', msg: a.map(serializeArg).join(' ') }),
+  }
+  const t0 = performance.now()
   // eslint-disable-next-line no-new-func
-  const fn = new Function('input', 'values', src)
-  return fn(input, values)
+  const fn = new Function('input', 'values', 'console', src)
+  let output, err
+  try {
+    output = fn(input, values, capture)
+  } catch (e) {
+    err = e
+  }
+  const durationMs = Math.round(performance.now() - t0)
+  // Store debug snapshot when this block has debug mode enabled
+  if (nodeId && useBlockDebugStore.getState().isDebugEnabled(nodeId)) {
+    useBlockDebugStore.getState().setSnapshot(nodeId, {
+      input, output: err ? undefined : output, consoleLogs: logs,
+      error: err ? err.message : null, durationMs, values,
+      executedAt: new Date().toISOString(),
+      breakpoints: useBlockDebugStore.getState().breakpoints[nodeId] || [],
+    })
+  }
+  if (err) throw err
+  return output
+}
+
+function serializeArg(a) {
+  if (typeof a === 'string') return a
+  try { return JSON.stringify(a) } catch { return String(a) }
 }
 
 function runIfElseNode({ values, input }) {
@@ -1575,7 +1620,17 @@ async function runApiNode({ values, input, inputsByHandle }) {
     url += (url.includes('?') ? '&' : '?') + qs
   }
   let headerEntries = Array.isArray(values.headers) ? values.headers : []
-  if (typeof values.headers === 'string') { try { headerEntries = JSON.parse(values.headers) } catch { headerEntries = [] } }
+  if (typeof values.headers === 'string') {
+    try {
+      const parsed = JSON.parse(values.headers)
+      if (Array.isArray(parsed)) {
+        headerEntries = parsed
+      } else if (parsed && typeof parsed === 'object') {
+        // Plain object format {"Content-Type": "application/json"} → convert to row array
+        headerEntries = Object.entries(parsed).map(([Key, Value]) => ({ Key, Value }))
+      }
+    } catch { headerEntries = [] }
+  }
   const headers = {}
   for (const h of headerEntries) { if (h.Key) headers[h.Key] = substitute(String(h.Value ?? '')) }
 
@@ -1886,6 +1941,22 @@ function runMergeNode({ values, input }) {
         }
       }
       return { merged, count: merged.length }
+    }
+    case 'deep_merge': {
+      function deepMerge(target, source) {
+        if (source == null || typeof source !== 'object' || Array.isArray(source)) return source ?? target
+        if (target == null || typeof target !== 'object' || Array.isArray(target)) return source
+        const out = { ...target }
+        for (const k of Object.keys(source)) {
+          out[k] = (typeof source[k] === 'object' && !Array.isArray(source[k]) &&
+                    typeof target[k] === 'object' && !Array.isArray(target[k]))
+            ? deepMerge(target[k], source[k])
+            : source[k]
+        }
+        return out
+      }
+      const merged = inputs.reduce((acc, item) => deepMerge(acc, item), {})
+      return { merged, count: Object.keys(merged).length }
     }
     default: {
       const merged = []

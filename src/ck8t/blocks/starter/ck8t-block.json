@@ -1,0 +1,7 @@
+{
+  "id": "starter",
+  "name": "Starter",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "starter", "ui": "ui/starter.js" }]
+}

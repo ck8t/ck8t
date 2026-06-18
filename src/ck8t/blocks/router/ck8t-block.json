@@ -1,0 +1,7 @@
+{
+  "id": "router",
+  "name": "Router",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "router", "ui": "ui/router.js" }]
+}

@@ -7,7 +7,8 @@
  * preserved so serialization stays compatible with sim's tool runners.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import CodeEditor from '../components/CodeEditor'
+import { EditorView } from '@salilvnair/dui'
+import { useBlockDebugStore } from '../stores/block-debug-store'
 import JsonEditor from '../components/JsonEditor'
 import FullscreenWrapper from '../components/FullscreenWrapper'
 import StyledSelect from '../components/StyledSelect'
@@ -15,6 +16,7 @@ import { useMcpStore } from '../mcp/mcp-store'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
+import { useAiProvidersStore } from '../stores/ai-providers-store'
 import JsonView from '../run/JsonView'
 import { extractMediaUri } from '../run/graph-runner'
 
@@ -65,8 +67,14 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
         ? sub.value(blockValues || {})
         : sub.defaultValue
 
-  // Subscribe to llm store so model comboboxes re-render when active provider changes
+  // Subscribe to stores so model comboboxes re-render when provider data loads or changes
   useLlmConfigStore((s) => s.activeProvider)
+  useAiProvidersStore((s) => s.providers)
+
+  // Debug mode state for this node (drives Monaco breakpoint gutter)
+  const isDebugMode = useBlockDebugStore((s) => s.debugEnabled.has(nodeId))
+  const breakpoints = useBlockDebugStore((s) => s.breakpoints[nodeId] || [])
+  const setBreakpoints = useBlockDebugStore((s) => s.setBreakpoints)
 
   const options = typeof sub.options === 'function' ? safeCall(sub.options, blockValues) : sub.options
 
@@ -181,16 +189,18 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
     case 'input-mapping':
     case 'knowledge-tag-filters':
     case 'document-tag-entry':
-      // All code/JSON-shaped fields render through CodeMirror. The language
-      // comes from the SubBlockConfig (`language: 'javascript' | 'json' |
-      // 'python'`); default is javascript.
       return (
-        <CodeEditor
+        <EditorView
           language={sub.language || (sub.type === 'code' ? 'javascript' : 'json')}
           value={defaultValue}
           onChange={(v) => set(v)}
-          placeholder={sub.placeholder || '// JSON or code...'}
-          minHeight="160px"
+          placeholder={sub.placeholder || '// code...'}
+          minHeight={180}
+          debugSupported={isDebugMode}
+          breakpoints={breakpoints}
+          onToggleBreakpoint={(line) => setBreakpoints(nodeId,
+            breakpoints.includes(line) ? breakpoints.filter(l => l !== line) : [...breakpoints, line]
+          )}
         />
       )
 

@@ -16,6 +16,32 @@
 
 ---
 
+## Sprint 0 — Folder Hierarchy & Multi-team Revamp ✅ DONE
+
+| # | Task | Status | Area | Description | File |
+|---|------|--------|------|-------------|------|
+| 0.1 | `workflowFolders[]` data model | ✅ | Store | Add `workflowFolders[]` to workspace-store with "Getting Started" seed; migrate `teamId → teamIds[]`; add `folderId` to workflows; folder CRUD actions | `stores/workspace-store.js` |
+| 0.2 | Folder tree UI — WorkflowsPanel | ✅ | SideNav | Rewrite WorkflowsPanel as folder tree: expand/collapse, inline rename, context menus, "+ New Folder", "+ New Workflow", Getting Started folder default | `sidenav/SideNav.jsx` |
+| 0.3 | Team → Agents tree — TeamsPanel | ✅ | SideNav | Rewrite TeamsPanel to show Team → Agents collapsible tree; hide pool abstraction; "Add agent" inline per team | `sidenav/SideNav.jsx` |
+| 0.4 | Multi-team Create modal | ✅ | Modal | Replace single team dropdown with checkboxes + folder picker in CreateWorkflowModal | `components/CreateWorkflowModal.jsx` |
+| 0.5 | Multi-team Import modal | ✅ | Modal | Same multi-team + folder picker in ImportWorkflowModal | `components/ImportWorkflowModal.jsx` |
+| 0.6 | Update all `teamId` callers | ✅ | Callers | Update AgentBuilderPage, Canvas, WorkflowInspector, TeamEditor to use `teamIds[]` | multiple |
+| 0.7 | WorkflowInspector multi-team picker | ✅ | Inspector | Replace single-team StyledSelect with checkbox list in workflow basic settings | `panel/WorkflowInspector.jsx` |
+
+---
+
+## Sprint 0.5 — Getting Started Workflow Library ✅ DONE
+
+| # | Task | Status | Area | Description | File |
+|---|------|--------|------|-------------|------|
+| 0.5.1 | `getting-started-workflows.js` — 45 demo workflows | ✅ | Store | 45 real working workflows, one per block type. Real public APIs (jsonplaceholder, GitHub, dog.ceo, httpbin, open-meteo), structured agent prompts, correct node/edge format | `stores/getting-started-workflows.js` |
+| 0.5.2 | Seed Getting Started on fresh install | ✅ | Store | `initialState.workflows` now includes all 45 GS workflows so they appear on first launch | `stores/workspace-store.js` |
+| 0.5.3 | `restoreGettingStarted()` store action | ✅ | Store | Removes all GS workflow IDs and re-seeds from canonical list; preserves user workflows in other folders | `stores/workspace-store.js` |
+| 0.5.4 | Settings → Getting Started tab | ✅ | Settings | New tab in Settings with live count, block coverage grid, and "Restore" button with confirmation | `tabs/SettingsTab.jsx` |
+| 0.5.5 | CSS for Getting Started section | ✅ | CSS | `.bs-gs-stat-row`, `.bs-gs-stat`, `.bs-gs-confirm`, `.bs-gs-success`, `.bs-gs-coverage`, `.bs-gs-tag`, `.bs-btn-danger` | `ck8t.css` |
+
+---
+
 ## Sprint 1 — Core Stability (Bug Fixes)
 
 | # | Task | Status | Area | Description | File |

@@ -1,0 +1,7 @@
+{
+  "id": "schedule",
+  "name": "Schedule",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "schedule", "ui": "ui/schedule.js" }]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "switch_case",
+  "name": "Switch Case",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "switch_case", "ui": "ui/switch_case.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "redis",
+  "name": "Redis",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "redis", "ui": "ui/redis.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

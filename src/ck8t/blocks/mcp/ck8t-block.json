@@ -1,0 +1,8 @@
+{
+  "id": "mcp",
+  "name": "Mcp",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "mcp", "ui": "ui/mcp.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

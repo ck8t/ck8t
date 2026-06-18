@@ -1,0 +1,8 @@
+{
+  "id": "json_path",
+  "name": "Json Path",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "json_path", "ui": "ui/json_path.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

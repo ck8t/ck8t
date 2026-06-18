@@ -1,0 +1,8 @@
+{
+  "id": "if_elseif_else",
+  "name": "If Elseif Else",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "if_elseif_else", "ui": "ui/if_elseif_else.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

@@ -1,0 +1,7 @@
+{
+  "id": "image_url_preview",
+  "name": "Image Url Preview",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "image_url_preview", "ui": "ui/image_url_preview.js" }]
+}

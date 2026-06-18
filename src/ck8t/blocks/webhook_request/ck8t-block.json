@@ -1,0 +1,7 @@
+{
+  "id": "webhook_request",
+  "name": "Webhook Request",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "webhook_request", "ui": "ui/webhook_request.js" }]
+}

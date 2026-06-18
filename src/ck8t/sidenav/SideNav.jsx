@@ -17,7 +17,7 @@ import BlockPalette from './BlockPalette'
 import { ManagerIcon } from '../components/BlockManager'
 import ContextMenu from './ContextMenu'
 import ConfirmModal from '../components/ConfirmModal'
-import CreateWorkflowModal from '../components/CreateWorkflowModal'
+import CreateWorkflowModal, { entityColor } from '../components/CreateWorkflowModal'
 import ImportWorkflowModal from '../components/ImportWorkflowModal'
 import StyledSelect from '../components/StyledSelect'
 import { pickAndParseWorkflowJSON } from '../utils/import-workflow'
@@ -81,6 +81,7 @@ export default function SideNav() {
   const openManager = useTabsStore((s) => s.openManager)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const teams = useWorkspaceStore((s) => s.teams)
+  const workflowFolders = useWorkspaceStore((s) => s.workflowFolders)
   const importWorkflow = useWorkspaceStore((s) => s.importWorkflow)
 
   async function handleImportClick() {
@@ -93,12 +94,13 @@ export default function SideNav() {
     }
   }
 
-  function handleImportConfirm(name, teamId) {
+  function handleImportConfirm(name, teamIds, folderId) {
     if (!importPending) return
-    const wf = importWorkflow(name, teamId, {
+    const wf = importWorkflow(name, teamIds, {
       nodes: importPending.nodes,
       edges: importPending.edges,
       subBlockValues: importPending.subBlockValues,
+      folderId,
     })
     openWorkflowTab(wf.id, wf.name)
     setImportPending(null)
@@ -265,8 +267,10 @@ export default function SideNav() {
       {importPending && (
         <ImportWorkflowModal
           teams={teams}
+          folders={workflowFolders}
           defaultName={importPending.name}
-          defaultTeamId={teams[0]?.id}
+          defaultTeamIds={teams[0] ? [teams[0].id] : []}
+          defaultFolderId={workflowFolders[0]?.id || null}
           onCancel={() => setImportPending(null)}
           onImport={handleImportConfirm}
         />
@@ -281,100 +285,274 @@ export default function SideNav() {
 
 function WorkflowsPanel() {
   const workflows = useWorkspaceStore((s) => s.workflows)
+  const workflowFolders = useWorkspaceStore((s) => s.workflowFolders)
   const activeId = useWorkspaceStore((s) => s.activeWorkflowId)
   const teams = useWorkspaceStore((s) => s.teams)
   const createWorkflow = useWorkspaceStore((s) => s.createWorkflow)
-  const openWorkflow = useWorkspaceStore((s) => s.openWorkflow)
   const deleteWorkflow = useWorkspaceStore((s) => s.deleteWorkflow)
   const renameWorkflow = useWorkspaceStore((s) => s.renameWorkflow)
   const duplicateWorkflow = useWorkspaceStore((s) => s.duplicateWorkflow)
+  const createWorkflowFolder = useWorkspaceStore((s) => s.createWorkflowFolder)
+  const renameWorkflowFolder = useWorkspaceStore((s) => s.renameWorkflowFolder)
+  const deleteWorkflowFolder = useWorkspaceStore((s) => s.deleteWorkflowFolder)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const renameTab = useTabsStore((s) => s.renameTab)
   const closeTab = useTabsStore((s) => s.closeTab)
   const [menu, setMenu] = useCtxMenu()
-  const [editing, setEditing] = useState(null)
+  const [editing, setEditing] = useState(null) // { kind: 'workflow'|'folder', id }
+  const [expanded, setExpanded] = useState(() => new Set(workflowFolders.map((f) => f.id)))
   const [newOpen, setNewOpen] = useState(false)
-  const [pendingDelete, setPendingDelete] = useState(null) // { id, name }
+  const [newFolderOpen, setNewFolderOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [pendingDelete, setPendingDelete] = useState(null) // { kind: 'workflow'|'folder', id, name }
+  const [defaultFolderId, setDefaultFolderId] = useState(null)
+
+  function toggleFolder(id) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function wfTeamNames(wf) {
+    const ids = wf.teamIds || (wf.teamId ? [wf.teamId] : [])
+    return ids.map((id) => teams.find((t) => t.id === id)?.name).filter(Boolean).join(', ') || '—'
+  }
+
+  // Group workflows by folderId
+  const byFolder = {}
+  const rootWorkflows = []
+  for (const wf of workflows) {
+    if (wf.folderId) {
+      if (!byFolder[wf.folderId]) byFolder[wf.folderId] = []
+      byFolder[wf.folderId].push(wf)
+    } else {
+      rootWorkflows.push(wf)
+    }
+  }
+
+  // Color for a workflow: use stored color first, fall back to deterministic hash
+  function wfColor(wf) { return wf.color || entityColor(wf.id) }
+
+  // Parse GS workflow name: "01 · Hello World — text_template" → { display: "01 · Hello World", chip: "text_template" }
+  function parseWfName(name) {
+    const dashIdx = name.indexOf(' — ')
+    if (dashIdx === -1) return { display: name, chip: null }
+    return { display: name.slice(0, dashIdx), chip: name.slice(dashIdx + 3) }
+  }
+
+  function WorkflowRow({ wf }) {
+    const color = wfColor(wf)
+    const { display, chip } = parseWfName(wf.name)
+    const teams = wfTeamNames(wf)
+    return (
+      <li
+        className={`bs-wfcard ${wf.id === activeId ? 'is-active' : ''}`}
+        style={{ '--wfc': color }}
+        onClick={() => openWorkflowTab(wf.id, wf.name)}
+        onDoubleClick={(e) => { e.stopPropagation(); setEditing({ kind: 'workflow', id: wf.id }) }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setMenu({
+            x: e.clientX, y: e.clientY,
+            items: [
+              { id: 'open', label: 'Open in Tab', icon: LinkIcon, onSelect: () => openWorkflowTab(wf.id, wf.name) },
+              { id: 'rename', label: 'Rename', onSelect: () => setEditing({ kind: 'workflow', id: wf.id }) },
+              { id: 'dup', label: 'Duplicate', onSelect: () => { const copy = duplicateWorkflow(wf.id); if (copy) openWorkflowTab(copy.id, copy.name) } },
+              { separator: true },
+              { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'workflow', id: wf.id, name: wf.name }) },
+            ],
+          })
+        }}
+      >
+        <div className="bs-wfcard-avatar">
+          <WorkflowsIcon style={{ width: 11, height: 11, color: '#fff', opacity: 0.92 }} />
+        </div>
+        <div className="bs-wfcard-body">
+          {editing?.kind === 'workflow' && editing.id === wf.id ? (
+            <input
+              autoFocus
+              className="bs-inline-edit"
+              defaultValue={wf.name}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) => { const v = e.target.value.trim() || wf.name; renameWorkflow(wf.id, v); renameTab(workflowTabId(wf.id), v); setEditing(null) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
+            />
+          ) : (
+            <>
+              <div className="bs-wfcard-name">{display}</div>
+              <div className="bs-wfcard-meta">
+                {chip && <span className="bs-wfcard-chip">{chip}</span>}
+                {!chip && teams !== '—' && <span className="bs-wfcard-chip">{teams}</span>}
+              </div>
+            </>
+          )}
+        </div>
+        <button
+          className="bs-wfcard-del"
+          onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'workflow', id: wf.id, name: wf.name }) }}
+          title="Delete workflow"
+        >
+          <TrashIcon className="bs-ico-xs" />
+        </button>
+      </li>
+    )
+  }
+
+  function FolderRow({ folder }) {
+    const isOpen = expanded.has(folder.id)
+    const folderWorkflows = byFolder[folder.id] || []
+    const isGS = folder.id === 'folder_getting_started'
+    return (
+      <li className="bs-tree" key={folder.id}>
+        <div
+          className={`bs-folder-row ${isGS ? 'bs-folder-row-gs' : ''}`}
+          onClick={() => toggleFolder(folder.id)}
+          onDoubleClick={(e) => { e.stopPropagation(); setEditing({ kind: 'folder', id: folder.id }) }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setMenu({
+              x: e.clientX, y: e.clientY,
+              items: [
+                { id: 'add', label: 'New workflow here', icon: PlusIcon, onSelect: () => { setDefaultFolderId(folder.id); setNewOpen(true) } },
+                { id: 'rename', label: 'Rename folder', onSelect: () => setEditing({ kind: 'folder', id: folder.id }) },
+                { separator: true },
+                { id: 'del', label: 'Delete folder', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'folder', id: folder.id, name: folder.name }) },
+              ],
+            })
+          }}
+        >
+          <ChevronRightIcon className={`bs-ico-xs bs-chevron ${isOpen ? 'is-open' : ''}`} />
+          <div className={`bs-folder-icon ${isGS ? 'bs-folder-icon-gs' : ''}`}>
+            <FolderIcon style={{ width: 11, height: 11 }} />
+          </div>
+          <div className="bs-folder-body">
+            {editing?.kind === 'folder' && editing.id === folder.id ? (
+              <input
+                autoFocus
+                className="bs-inline-edit"
+                defaultValue={folder.name}
+                onClick={(e) => e.stopPropagation()}
+                onBlur={(e) => { const v = e.target.value.trim() || folder.name; renameWorkflowFolder(folder.id, v); setEditing(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
+              />
+            ) : (
+              <span className="bs-folder-name">{folder.name}</span>
+            )}
+          </div>
+          <span className={`bs-folder-badge ${isGS ? 'bs-folder-badge-gs' : ''}`}>{folderWorkflows.length}</span>
+          <button
+            className="bs-folder-del"
+            onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'folder', id: folder.id, name: folder.name }) }}
+            title="Delete folder"
+          >
+            <TrashIcon className="bs-ico-xs" />
+          </button>
+        </div>
+        {isOpen && (
+          <div className="bs-tree-children">
+            <ul className="bs-rows bs-rows-nested bs-rows-wf">
+              {folderWorkflows.map((wf) => <WorkflowRow key={wf.id} wf={wf} />)}
+              {folderWorkflows.length === 0 && (
+                <li className="bs-empty bs-empty-sm">
+                  <button className="bs-link" onClick={(e) => { e.stopPropagation(); setDefaultFolderId(folder.id); setNewOpen(true) }}>
+                    + Add workflow
+                  </button>
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </li>
+    )
+  }
 
   return (
     <div className="bs-sec">
-      <button
-        className="bs-add-btn"
-        onClick={() => setNewOpen(true)}
-      >
-        <PlusIcon className="bs-ico-sm" />
-        <span>New workflow</span>
-      </button>
-      <ul className="bs-rows">
-        {workflows.length === 0 && <li className="bs-empty">No workflows yet.</li>}
-        {workflows.map((w) => (
-          <li
-            key={w.id}
-            className={`bs-row ${w.id === activeId ? 'is-active' : ''}`}
-            onClick={() => openWorkflowTab(w.id, w.name)}
-            onDoubleClick={(e) => { e.stopPropagation(); setEditing(w.id) }}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              setMenu({
-                x: e.clientX, y: e.clientY,
-                items: [
-                  { id: 'open', label: 'Open in Tab', icon: LinkIcon, onSelect: () => openWorkflowTab(w.id, w.name) },
-                  { id: 'rename', label: 'Rename', onSelect: () => setEditing(w.id) },
-                  { id: 'dup', label: 'Duplicate', onSelect: () => { const copy = duplicateWorkflow(w.id); if (copy) openWorkflowTab(copy.id, copy.name) } },
-                  { separator: true },
-                  { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ id: w.id, name: w.name }) },
-                ],
-              })
+      <div className="bs-sec-actions">
+        <button
+          className="bs-add-btn bs-add-btn-sm"
+          onClick={() => setNewFolderOpen(true)}
+          title="New folder"
+        >
+          <FolderIcon className="bs-ico-sm" />
+          <span>New folder</span>
+        </button>
+        <button
+          className="bs-add-btn"
+          onClick={() => { setDefaultFolderId(workflowFolders[0]?.id || null); setNewOpen(true) }}
+        >
+          <PlusIcon className="bs-ico-sm" />
+          <span>New workflow</span>
+        </button>
+      </div>
+
+      {newFolderOpen && (
+        <div className="bs-inline-form bs-inline-form-sm">
+          <input
+            autoFocus
+            className="bs-input"
+            placeholder="Folder name"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newFolderName.trim()) {
+                createWorkflowFolder(newFolderName.trim())
+                setNewFolderName('')
+                setNewFolderOpen(false)
+              }
+              if (e.key === 'Escape') { setNewFolderName(''); setNewFolderOpen(false) }
             }}
-          >
-            <FolderIcon className="bs-ico-sm bs-row-lead" />
-            <div className="bs-row-main">
-              {editing === w.id ? (
-                <input
-                  autoFocus
-                  className="bs-inline-edit"
-                  defaultValue={w.name}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={(e) => { const v = e.target.value.trim() || w.name; renameWorkflow(w.id, v); renameTab(workflowTabId(w.id), v); setEditing(null) }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') e.currentTarget.blur()
-                    if (e.key === 'Escape') setEditing(null)
-                  }}
-                />
-              ) : (
-                <>
-                  <div className="bs-row-title">{w.name}</div>
-                  <div className="bs-row-meta">{teams.find((t) => t.id === w.teamId)?.name || '—'}</div>
-                </>
-              )}
-            </div>
-            <button
-              className="bs-row-action"
-              onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: w.id, name: w.name }) }}
-              title="Delete workflow"
-            >
-              <TrashIcon className="bs-ico-xs" />
-            </button>
-          </li>
-        ))}
+            onBlur={() => {
+              if (newFolderName.trim()) createWorkflowFolder(newFolderName.trim())
+              setNewFolderName('')
+              setNewFolderOpen(false)
+            }}
+          />
+        </div>
+      )}
+
+      <ul className="bs-rows bs-rows-wf">
+        {workflowFolders.map((f) => <FolderRow key={f.id} folder={f} />)}
+        {rootWorkflows.map((wf) => <WorkflowRow key={wf.id} wf={wf} />)}
+        {workflows.length === 0 && <li className="bs-empty">No workflows yet.</li>}
       </ul>
       {menu}
 
       {newOpen && (
         <CreateWorkflowModal
           teams={teams}
+          folders={workflowFolders}
+          defaultFolderId={defaultFolderId}
           onCancel={() => setNewOpen(false)}
-          onCreate={(name, teamId) => { const wf = createWorkflow(name, teamId); openWorkflowTab(wf.id, wf.name); setNewOpen(false) }}
+          onCreate={(name, teamIds, fId, color, description) => {
+            const wf = createWorkflow(name, teamIds, { folderId: fId, color, description })
+            openWorkflowTab(wf.id, wf.name)
+            setNewOpen(false)
+          }}
         />
       )}
 
       {pendingDelete && (
         <ConfirmModal
-          title="Delete workflow?"
-          message={`"${pendingDelete.name}" and all its blocks will be removed. This cannot be undone.`}
-          confirmLabel="Delete workflow"
+          title={pendingDelete.kind === 'folder' ? 'Delete folder?' : 'Delete workflow?'}
+          message={
+            pendingDelete.kind === 'folder'
+              ? `"${pendingDelete.name}" will be removed. Workflows inside will move to root (not deleted).`
+              : `"${pendingDelete.name}" and all its blocks will be removed. This cannot be undone.`
+          }
+          confirmLabel={pendingDelete.kind === 'folder' ? 'Delete folder' : 'Delete workflow'}
           onCancel={() => setPendingDelete(null)}
-          onConfirm={() => { closeTab(workflowTabId(pendingDelete.id)); deleteWorkflow(pendingDelete.id); setPendingDelete(null) }}
+          onConfirm={() => {
+            if (pendingDelete.kind === 'folder') {
+              deleteWorkflowFolder(pendingDelete.id)
+            } else {
+              closeTab(workflowTabId(pendingDelete.id))
+              deleteWorkflow(pendingDelete.id)
+            }
+            setPendingDelete(null)
+          }}
         />
       )}
     </div>
@@ -383,15 +561,43 @@ function WorkflowsPanel() {
 
 function TeamsPanel() {
   const teams = useWorkspaceStore((s) => s.teams)
+  const allPools = useWorkspaceStore((s) => s.agentPools)
+  const allAgents = useWorkspaceStore((s) => s.agents)
   const createTeam = useWorkspaceStore((s) => s.createTeam)
   const deleteTeam = useWorkspaceStore((s) => s.deleteTeam)
   const renameTeam = useWorkspaceStore((s) => s.renameTeam)
   const duplicateTeam = useWorkspaceStore((s) => s.duplicateTeam)
+  const createAgentPool = useWorkspaceStore((s) => s.createAgentPool)
+  const createAgent = useWorkspaceStore((s) => s.createAgent)
+  const deleteAgent = useWorkspaceStore((s) => s.deleteAgent)
+  const duplicateAgent = useWorkspaceStore((s) => s.duplicateAgent)
   const openTab = useTabsStore((s) => s.openTab)
   const [name, setName] = useState('')
   const [menu, setMenu] = useCtxMenu()
   const [editing, setEditing] = useState(null)
-  const [pendingDelete, setPendingDelete] = useState(null) // { id, name }
+  const [expanded, setExpanded] = useState(() => new Set(teams.map((t) => t.id)))
+  const [pendingDelete, setPendingDelete] = useState(null)
+
+  function toggle(id) {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function getTeamAgents(teamId) {
+    return allPools
+      .filter((p) => p.teamId === teamId)
+      .flatMap((p) => allAgents.filter((a) => a.poolId === p.id))
+  }
+
+  function ensurePoolAndCreateAgent(teamId) {
+    let pool = allPools.find((p) => p.teamId === teamId)
+    if (!pool) pool = createAgentPool(teamId, 'Default Pool')
+    const agent = createAgent(pool.id, { name: 'New Agent' })
+    openTab({ id: agentTabId(agent.id), kind: 'agent', entityId: agent.id, title: agent.name })
+  }
 
   return (
     <div className="bs-sec">
@@ -411,55 +617,143 @@ function TeamsPanel() {
           <PlusIcon className="bs-ico-sm" />
         </button>
       </div>
-      <ul className="bs-rows">
-        {teams.map((t) => (
-          <li
-            key={t.id}
-            className="bs-row"
-            onClick={() => openTab({ id: teamTabId(t.id), kind: 'team', entityId: t.id, title: t.name })}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              setMenu({
-                x: e.clientX, y: e.clientY,
-                items: [
-                  { id: 'open', label: 'Open', icon: LinkIcon, onSelect: () => openTab({ id: teamTabId(t.id), kind: 'team', entityId: t.id, title: t.name }) },
-                  { id: 'rename', label: 'Rename', onSelect: () => setEditing(t.id) },
-                  { id: 'dup', label: 'Duplicate', onSelect: () => duplicateTeam(t.id) },
-                  { separator: true },
-                  { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ id: t.id, name: t.name }) },
-                ],
-              })
-            }}
-          >
-            <TeamsIcon className="bs-ico-sm bs-row-lead" />
-            <div className="bs-row-main">
-              {editing === t.id ? (
-                <input
-                  autoFocus className="bs-inline-edit" defaultValue={t.name}
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onBlur={(e) => { renameTeam(t.id, e.target.value.trim() || t.name); setEditing(null) }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
-                />
-              ) : (
-                <>
-                  <div className="bs-row-title">{t.name}</div>
-                  <div className="bs-row-meta">{t.agentPoolIds.length} pool{t.agentPoolIds.length === 1 ? '' : 's'}</div>
-                </>
+
+      <ul className="bs-tmcards">
+        {teams.map((t) => {
+          const teamAgents = getTeamAgents(t.id)
+          const isOpen = expanded.has(t.id)
+          const color = t.color || entityColor(t.id)
+          return (
+            <li key={t.id} className="bs-tmcard" style={{ '--tmc': color }}>
+              <div
+                className="bs-tmcard-header"
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setMenu({
+                    x: e.clientX, y: e.clientY,
+                    items: [
+                      { id: 'open', label: 'Open settings', icon: LinkIcon, onSelect: () => openTab({ id: teamTabId(t.id), kind: 'team', entityId: t.id, title: t.name }) },
+                      { id: 'add-agent', label: 'New agent', icon: PlusIcon, onSelect: () => ensurePoolAndCreateAgent(t.id) },
+                      { id: 'rename', label: 'Rename', onSelect: () => setEditing(t.id) },
+                      { id: 'dup', label: 'Duplicate', onSelect: () => duplicateTeam(t.id) },
+                      { separator: true },
+                      { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'team', id: t.id, name: t.name }) },
+                    ],
+                  })
+                }}
+              >
+                {/* Avatar+name area → opens team tab */}
+                <div
+                  className="bs-tmcard-main"
+                  onClick={() => openTab({ id: teamTabId(t.id), kind: 'team', entityId: t.id, title: t.name })}
+                  onDoubleClick={(e) => { e.stopPropagation(); setEditing(t.id) }}
+                >
+                  <div className="bs-tmcard-avatar">
+                    <TeamsIcon style={{ width: 11, height: 11, color: '#fff', opacity: 0.92 }} />
+                  </div>
+                  <div className="bs-tmcard-body">
+                    {editing === t.id ? (
+                      <input
+                        autoFocus className="bs-inline-edit" defaultValue={t.name}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onBlur={(e) => { renameTeam(t.id, e.target.value.trim() || t.name); setEditing(null) }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
+                      />
+                    ) : (
+                      <>
+                        <div className="bs-tmcard-name">{t.name}</div>
+                        <div className="bs-tmcard-meta">
+                          <span className="bs-tmcard-chip">{teamAgents.length} agent{teamAgents.length === 1 ? '' : 's'}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {/* Chevron → toggles expand/collapse */}
+                <button
+                  className="bs-tmcard-toggle"
+                  onClick={(e) => { e.stopPropagation(); toggle(t.id) }}
+                  title={isOpen ? 'Collapse' : 'Expand'}
+                >
+                  <ChevronRightIcon className={`bs-ico-xs bs-chevron ${isOpen ? 'is-open' : ''}`} style={{ color: 'var(--text-secondary)' }} />
+                </button>
+                <button
+                  className="bs-tmcard-del"
+                  onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'team', id: t.id, name: t.name }) }}
+                  title="Delete team"
+                >
+                  <TrashIcon className="bs-ico-xs" />
+                </button>
+              </div>
+              {isOpen && (
+                <div className="bs-tmcard-agents">
+                  {teamAgents.map((a) => {
+                    const aColor = a.color || entityColor(a.id)
+                    return (
+                      <div
+                        key={a.id}
+                        className="bs-agrow"
+                        style={{ '--agc': aColor }}
+                        onClick={() => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name })}
+                        onContextMenu={(e) => {
+                          e.preventDefault()
+                          setMenu({
+                            x: e.clientX, y: e.clientY,
+                            items: [
+                              { id: 'open', label: 'Open', icon: LinkIcon, onSelect: () => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name }) },
+                              { id: 'dup', label: 'Duplicate', onSelect: () => duplicateAgent(a.id) },
+                              { separator: true },
+                              { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) },
+                            ],
+                          })
+                        }}
+                      >
+                        <div className="bs-agrow-avatar">
+                          <AgentsIcon style={{ width: 10, height: 10, color: '#fff', opacity: 0.92 }} />
+                        </div>
+                        <div className="bs-agrow-body">
+                          <div className="bs-agrow-name">{a.name}</div>
+                          <div className="bs-agrow-meta">{a.model} · {a.attachedSkillIds?.length || 0} skill{(a.attachedSkillIds?.length || 0) === 1 ? '' : 's'}</div>
+                        </div>
+                        <button
+                          className="bs-agrow-del"
+                          onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) }}
+                          title="Delete agent"
+                        >
+                          <TrashIcon className="bs-ico-xs" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                  {teamAgents.length === 0 && <div className="bs-empty bs-empty-sm">No agents yet.</div>}
+                  <div className="bs-add-inline" onClick={() => ensurePoolAndCreateAgent(t.id)}>
+                    <PlusIcon className="bs-ico-xs" />
+                    <span>Add agent</span>
+                  </div>
+                </div>
               )}
-            </div>
-            <button className="bs-row-action" onClick={(e) => { e.stopPropagation(); setPendingDelete({ id: t.id, name: t.name }) }} title="Delete"><TrashIcon className="bs-ico-xs" /></button>
-          </li>
-        ))}
+            </li>
+          )
+        })}
+        {teams.length === 0 && <li className="bs-empty">No teams yet.</li>}
       </ul>
       {menu}
       {pendingDelete && (
         <ConfirmModal
-          title="Delete team?"
-          message={`"${pendingDelete.name}" will be removed. Agent pools and agents belonging to this team remain, but become orphaned.`}
-          confirmLabel="Delete team"
+          title={pendingDelete.kind === 'team' ? 'Delete team?' : 'Delete agent?'}
+          message={
+            pendingDelete.kind === 'team'
+              ? `"${pendingDelete.name}" will be removed. Agents and pools belonging to this team become orphaned.`
+              : `"${pendingDelete.name}" will be removed from its pool.`
+          }
+          confirmLabel={pendingDelete.kind === 'team' ? 'Delete team' : 'Delete agent'}
           onCancel={() => setPendingDelete(null)}
-          onConfirm={() => { deleteTeam(pendingDelete.id); setPendingDelete(null) }}
+          onConfirm={() => {
+            if (pendingDelete.kind === 'team') deleteTeam(pendingDelete.id)
+            else deleteAgent(pendingDelete.id)
+            setPendingDelete(null)
+          }}
         />
       )}
     </div>
@@ -480,9 +774,9 @@ function AgentsPanel() {
   const [expanded, setExpanded] = useState(() => new Set(pools.map((p) => p.id)))
   const [poolName, setPoolName] = useState('')
   const [poolTeam, setPoolTeam] = useState(teams[0]?.id || '')
-  const [name, setName] = useState('')
+  const [agentName, setAgentName] = useState('')
   const [menu, setMenu] = useCtxMenu()
-  const [pendingDelete, setPendingDelete] = useState(null) // { kind: 'pool'|'agent', id, name }
+  const [pendingDelete, setPendingDelete] = useState(null)
 
   function toggle(id) {
     setExpanded((prev) => {
@@ -527,76 +821,118 @@ function AgentsPanel() {
         </div>
       </Collapsible>
 
-      <ul className="bs-rows">
+      <div className="bs-pool-groups">
         {pools.map((p) => {
           const poolAgents = agents.filter((a) => a.poolId === p.id)
           const open = expanded.has(p.id)
+          const poolColor = entityColor(p.id)
           return (
-            <li key={p.id} className="bs-tree">
+            <div key={p.id} className="bs-pool-group">
               <div
-                className="bs-row bs-row-header"
+                className={`bs-pool-head ${open ? 'is-open' : ''}`}
+                style={{ '--pc': poolColor }}
                 onClick={() => toggle(p.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
                   setMenu({
                     x: e.clientX, y: e.clientY,
                     items: [
-                      { id: 'add', label: 'New agent…', icon: PlusIcon, onSelect: () => createAgent(p.id, { name: 'New Agent' }) },
+                      { id: 'add', label: 'New agent', icon: PlusIcon, onSelect: () => { const a = createAgent(p.id, { name: 'New Agent' }); openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name }) } },
                       { separator: true },
                       { id: 'del', label: 'Delete pool', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'pool', id: p.id, name: p.name }) },
                     ],
                   })
                 }}
               >
-                <ChevronRightIcon className={`bs-ico-xs bs-chevron ${open ? 'is-open' : ''}`} />
-                <FolderIcon className="bs-ico-sm bs-row-lead" />
-                <div className="bs-row-main">
-                  <div className="bs-row-title">{p.name}</div>
-                  <div className="bs-row-meta">{poolAgents.length} agent{poolAgents.length === 1 ? '' : 's'}</div>
-                </div>
-                <button className="bs-row-action" onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'pool', id: p.id, name: p.name }) }} title="Delete pool"><TrashIcon className="bs-ico-xs" /></button>
+                <ChevronRightIcon className={`bs-ico-xs bs-chevron ${open ? 'is-open' : ''}`} style={{ color: poolColor }} />
+                <span className="bs-pool-name">{p.name}</span>
+                <span className="bs-pool-badge">{poolAgents.length}</span>
+                <button
+                  className="bs-pool-del"
+                  onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'pool', id: p.id, name: p.name }) }}
+                  title="Delete pool"
+                >
+                  <TrashIcon className="bs-ico-xs" />
+                </button>
               </div>
+
               {open && (
-                <div className="bs-tree-children">
-                  <div className="bs-inline-form">
-                    <input className="bs-input" placeholder="Agent name" value={name} onChange={(e) => setName(e.target.value)} />
-                    <button className="bs-icon-btn" onClick={() => { if (name.trim()) { createAgent(p.id, { name: name.trim() }); setName('') } }}><PlusIcon className="bs-ico-sm" /></button>
+                <div className="bs-pool-body">
+                  <div className="bs-inline-form bs-inline-form-sm">
+                    <input
+                      className="bs-input"
+                      placeholder="New agent name"
+                      value={agentName}
+                      onChange={(e) => setAgentName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && agentName.trim()) {
+                          const a = createAgent(p.id, { name: agentName.trim() })
+                          openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name })
+                          setAgentName('')
+                        }
+                      }}
+                    />
+                    <button
+                      className="bs-icon-btn"
+                      onClick={() => {
+                        if (agentName.trim()) {
+                          const a = createAgent(p.id, { name: agentName.trim() })
+                          openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name })
+                          setAgentName('')
+                        }
+                      }}
+                    >
+                      <PlusIcon className="bs-ico-sm" />
+                    </button>
                   </div>
-                  <ul className="bs-rows bs-rows-nested">
-                    {poolAgents.map((a) => (
-                      <li
-                        key={a.id}
-                        className="bs-row"
-                        onClick={() => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name })}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          setMenu({
-                            x: e.clientX, y: e.clientY,
-                            items: [
-                              { id: 'open', label: 'Open', icon: LinkIcon, onSelect: () => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name }) },
-                              { id: 'dup', label: 'Duplicate', onSelect: () => duplicateAgent(a.id) },
-                              { separator: true },
-                              { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) },
-                            ],
-                          })
-                        }}
-                      >
-                        <AgentsIcon className="bs-ico-sm bs-row-lead" />
-                        <div className="bs-row-main">
-                          <div className="bs-row-title">{a.name}</div>
-                          <div className="bs-row-meta">{a.model}</div>
+                  <div className="bs-agcards">
+                    {poolAgents.map((a) => {
+                      const aColor = a.color || entityColor(a.id)
+                      return (
+                        <div
+                          key={a.id}
+                          className="bs-agcard"
+                          style={{ '--agc': aColor }}
+                          onClick={() => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name })}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            setMenu({
+                              x: e.clientX, y: e.clientY,
+                              items: [
+                                { id: 'open', label: 'Open', icon: LinkIcon, onSelect: () => openTab({ id: agentTabId(a.id), kind: 'agent', entityId: a.id, title: a.name }) },
+                                { id: 'dup', label: 'Duplicate', onSelect: () => duplicateAgent(a.id) },
+                                { separator: true },
+                                { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) },
+                              ],
+                            })
+                          }}
+                        >
+                          <div className="bs-agcard-avatar">
+                            <AgentsIcon style={{ width: 10, height: 10, color: '#fff', opacity: 0.92 }} />
+                          </div>
+                          <div className="bs-agcard-body">
+                            <div className="bs-agcard-name">{a.name}</div>
+                            <div className="bs-agcard-meta">{a.model} · {a.attachedSkillIds?.length || 0} skill{(a.attachedSkillIds?.length || 0) === 1 ? '' : 's'}</div>
+                          </div>
+                          <button
+                            className="bs-agcard-del"
+                            onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) }}
+                            title="Delete agent"
+                          >
+                            <TrashIcon className="bs-ico-xs" />
+                          </button>
                         </div>
-                        <button className="bs-row-action" onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'agent', id: a.id, name: a.name }) }} title="Delete"><TrashIcon className="bs-ico-xs" /></button>
-                      </li>
-                    ))}
-                    {poolAgents.length === 0 && <li className="bs-empty">No agents in this pool.</li>}
-                  </ul>
+                      )
+                    })}
+                    {poolAgents.length === 0 && <div className="bs-empty bs-empty-sm">No agents in this pool.</div>}
+                  </div>
                 </div>
               )}
-            </li>
+            </div>
           )
         })}
-      </ul>
+        {pools.length === 0 && <div className="bs-empty">No pools yet. Create one above.</div>}
+      </div>
       {menu}
       {pendingDelete && (
         <ConfirmModal

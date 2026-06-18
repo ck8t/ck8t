@@ -1,0 +1,7 @@
+{
+  "id": "for_each",
+  "name": "For Each",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "for_each", "ui": "ui/for_each.js" }]
+}

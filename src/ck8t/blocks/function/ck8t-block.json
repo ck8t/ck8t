@@ -1,0 +1,8 @@
+{
+  "id": "function",
+  "name": "Function",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "function", "ui": "ui/function.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

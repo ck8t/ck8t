@@ -1,0 +1,8 @@
+{
+  "id": "delay",
+  "name": "Delay",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "delay", "ui": "ui/delay.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

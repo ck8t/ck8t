@@ -29,6 +29,10 @@ export class Ck8tPanel {
   private readonly _extensionUri: vscode.Uri;
   private _disposables: vscode.Disposable[] = [];
 
+  // Block debugger state
+  private _blockDebugResumeResolve: (() => void) | null = null;
+  private _blockDebugStopped = false;
+
   private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, bridgePort: number) {
     this._panel       = panel;
     this._extensionUri = extensionUri;
@@ -342,6 +346,39 @@ console.log('[ck8t] __CK8T_BLOCK_DEFS__ ready:',Object.keys(window.__CK8T_BLOCK_
         this._refreshKeyStatus();
         break;
       }
+
+      // ─── Block Debugger ─────────────────────────────────────────────────────
+      case 'blockDebug:getFiles': {
+        const { blockType, nodeId } = msg as { type: string; blockType: string; nodeId: string };
+        this._sendBlockDebugFiles(blockType, nodeId);
+        break;
+      }
+      case 'blockDebug:runExtension': {
+        const req = msg as {
+          type: string; nodeId: string; blockType: string; file: string;
+          code: string; input: unknown; values: Record<string, unknown>; breakpoints: number[];
+        };
+        this._runBlockDebugExtension(req).catch(err => {
+          this._panel.webview.postMessage({ type: 'blockDebug:error', message: String(err?.message ?? err) });
+        });
+        break;
+      }
+      case 'blockDebug:resume': {
+        this._blockDebugResumeResolve?.();
+        this._blockDebugResumeResolve = null;
+        break;
+      }
+      case 'blockDebug:stepOver': {
+        this._blockDebugResumeResolve?.();
+        this._blockDebugResumeResolve = null;
+        break;
+      }
+      case 'blockDebug:stop': {
+        this._blockDebugStopped = true;
+        this._blockDebugResumeResolve?.();
+        this._blockDebugResumeResolve = null;
+        break;
+      }
       case 'saveFile': {
         const { filename, content, format } = msg.payload as { filename: string; content: string; format?: string };
         const ext = (filename || 'output.json').split('.').pop()?.toLowerCase() || 'json';
@@ -376,6 +413,168 @@ console.log('[ck8t] __CK8T_BLOCK_DEFS__ ready:',Object.keys(window.__CK8T_BLOCK_
         break;
       }
     }
+  }
+
+  // ─── Block Debugger helpers ──────────────────────────────────────────────
+
+  private _sendBlockDebugFiles(blockType: string, nodeId: string): void {
+    const files: { name: string; path: string; content: string; runnerType: string }[] = [];
+
+    try {
+      // ── 1. Check if it's a CORE block (in the ck8t source tree) ─────────────
+      // Extension lives at: <workspace>/extension/vscode/ck8t
+      // Core blocks live at: <workspace>/src/ck8t/blocks/<blockType>
+      const extensionRoot = this._extensionUri.fsPath; // e.g. /.../ck8t/extension/vscode/ck8t
+      const workspaceRoot = path.resolve(extensionRoot, '..', '..', '..'); // /.../ck8t
+      const coreBlockDir = path.join(workspaceRoot, 'src', 'ck8t', 'blocks', blockType);
+      const coreManifestPath = path.join(coreBlockDir, 'ck8t-block.json');
+
+      if (fs.existsSync(coreManifestPath)) {
+        // It's a core block
+        const manifest = JSON.parse(fs.readFileSync(coreManifestPath, 'utf-8'));
+        const runners: Record<string, string> = manifest.runners ?? {};
+        const runnerMap: Record<string, string> = { client: 'client', extension: 'extension', server: 'server' };
+        for (const [key, label] of Object.entries(runnerMap)) {
+          const relPath: string = runners[key];
+          if (!relPath) continue;
+          const filePath = path.join(coreBlockDir, relPath);
+          if (!fs.existsSync(filePath)) continue;
+          files.push({ name: path.basename(filePath), path: filePath, content: fs.readFileSync(filePath, 'utf-8'), runnerType: label });
+        }
+        this._panel.webview.postMessage({ type: 'blockDebug:files', blockType, nodeId, files });
+        return;
+      }
+
+      // ── 2. Community block — scan installed blocks directory ─────────────────
+      const communityBlocksDir = path.join(os.homedir(), '.salilvnair', 'ck8t', 'blocks');
+      let blockDir: string | null = null;
+
+      if (fs.existsSync(communityBlocksDir)) {
+        const entries = fs.readdirSync(communityBlocksDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue;
+          const manifestPath = path.join(communityBlocksDir, entry.name, 'ck8t-block.json');
+          if (!fs.existsSync(manifestPath)) continue;
+          try {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+            const blockDefs: { type?: string }[] = manifest.blocks ?? [];
+            if (blockDefs.some(b => b.type === blockType)) {
+              blockDir = path.join(communityBlocksDir, entry.name);
+              break;
+            }
+          } catch { /* skip malformed manifests */ }
+        }
+      }
+
+      if (!blockDir) {
+        this._panel.webview.postMessage({ type: 'blockDebug:files', blockType, nodeId, files: [] });
+        return;
+      }
+
+      const manifestPath = path.join(blockDir, 'ck8t-block.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const runners: Record<string, string> = manifest.runners ?? {};
+      const runnerMap: Record<string, string> = { server: 'server', extension: 'extension', client: 'client' };
+      for (const [key, label] of Object.entries(runnerMap)) {
+        const filename: string = runners[key];
+        if (!filename) continue;
+        const filePath = path.join(blockDir, filename);
+        if (!fs.existsSync(filePath)) continue;
+        files.push({ name: filename, path: filePath, content: fs.readFileSync(filePath, 'utf-8'), runnerType: label });
+      }
+
+      // Include UI files referenced in block defs
+      const blockDefs: { ui?: string }[] = manifest.blocks ?? [];
+      for (const bd of blockDefs) {
+        if (!bd.ui) continue;
+        const filePath = path.join(blockDir, bd.ui);
+        if (!fs.existsSync(filePath)) continue;
+        if (!files.some(f => f.name === bd.ui)) {
+          files.push({ name: bd.ui!, path: filePath, content: fs.readFileSync(filePath, 'utf-8'), runnerType: 'ui' });
+        }
+      }
+    } catch (err) {
+      console.error('[Ck8tPanel] blockDebug:getFiles error', err);
+    }
+
+    this._panel.webview.postMessage({ type: 'blockDebug:files', blockType, nodeId, files });
+  }
+
+  private async _runBlockDebugExtension(req: {
+    nodeId: string; blockType: string; file: string;
+    code: string; input: unknown; values: Record<string, unknown>; breakpoints: number[];
+  }): Promise<void> {
+    this._blockDebugStopped = false;
+    this._blockDebugResumeResolve = null;
+
+    const { code, input, values, breakpoints, file } = req;
+    const bpSet = new Set(breakpoints);
+
+    // Inject __ck8tBp__ calls before each breakpointed line
+    const transformed = this._transformForDebug(code, bpSet);
+
+    const post = (msg: object) => {
+      try { this._panel.webview.postMessage(msg); } catch { /* panel may be disposed */ }
+    };
+
+    const __ck8tBp__ = async (lineNo: number): Promise<void> => {
+      if (this._blockDebugStopped) throw new Error('__ck8t_stopped__');
+      post({ type: 'blockDebug:paused', file, line: lineNo });
+      await new Promise<void>(resolve => { this._blockDebugResumeResolve = resolve; });
+      this._blockDebugResumeResolve = null;
+      if (this._blockDebugStopped) throw new Error('__ck8t_stopped__');
+      post({ type: 'blockDebug:resumed' });
+    };
+
+    const consoleLogs: { level: string; msg: string }[] = [];
+    const captureConsole: Record<string, (...args: unknown[]) => void> = {};
+    for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+      captureConsole[level] = (...args: unknown[]) => {
+        const msg = args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+        consoleLogs.push({ level, msg });
+        post({ type: 'blockDebug:log', entry: { level, msg } });
+      };
+    }
+
+    try {
+      // eslint-disable-next-line no-new-func
+      const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (...args: string[]) => (...fnArgs: unknown[]) => Promise<unknown>;
+      const fn = new AsyncFunction('input', 'values', 'console', '__ck8tBp__', `
+        "use strict";
+        return (async function __ck8t_runner__() { ${transformed} })()
+      `);
+      const output = await fn(input, values, captureConsole, __ck8tBp__);
+      post({ type: 'blockDebug:completed', output });
+    } catch (err: unknown) {
+      const msg = (err instanceof Error) ? err.message : String(err);
+      if (msg !== '__ck8t_stopped__') {
+        post({ type: 'blockDebug:error', message: msg });
+      } else {
+        // stopped — already handled by stop case
+      }
+    }
+  }
+
+  private _transformForDebug(code: string, breakpoints: Set<number>): string {
+    if (breakpoints.size === 0) return code;
+    const lines = code.split('\n');
+    const out: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const lineNo = i + 1;
+      if (breakpoints.has(lineNo) && this._isExecutableLine(lines[i])) {
+        out.push(`await __ck8tBp__(${lineNo});`);
+      }
+      out.push(lines[i]);
+    }
+    return out.join('\n');
+  }
+
+  private _isExecutableLine(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*')) return false;
+    if (trimmed === '{' || trimmed === '}' || trimmed === '};' || trimmed === '})' || trimmed === '});') return false;
+    return true;
   }
 
   private async _refreshKeyStatus(): Promise<void> {

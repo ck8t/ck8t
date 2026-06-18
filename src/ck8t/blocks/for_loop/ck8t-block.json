@@ -1,0 +1,7 @@
+{
+  "id": "for_loop",
+  "name": "For Loop",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "for_loop", "ui": "ui/for_loop.js" }]
+}

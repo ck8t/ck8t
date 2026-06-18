@@ -1,0 +1,8 @@
+{
+  "id": "ns9_query",
+  "name": "NS9 Query",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "ns9_query", "ui": "ui/ns9_query.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

@@ -34,7 +34,15 @@ export default defineConfig({
       // Dedicated webview entry — mounts only AgentBuilderPage.
       // Named 'index' so Vite outputs webview/dist/index.html (not webview-entry/index.html).
       input: { index: resolve(process.cwd(), 'webview-entry/index.html') },
+      output: {
+        // Split Monaco into its own chunk so it doesn't inflate the main bundle.
+        manualChunks: {
+          'monaco-editor': ['monaco-editor'],
+          'monaco-react': ['@monaco-editor/react'],
+        },
+      },
     },
+    chunkSizeWarningLimit: 3000,
   },
 
   define: {
@@ -42,6 +50,13 @@ export default defineConfig({
   },
 
   plugins: [react(), tailwindcss()],
+
+  resolve: {
+    // Required for file: npm deps — resolves transitive imports (monaco-editor etc.)
+    // from ck8t's node_modules rather than from the DUI source directory.
+    preserveSymlinks: true,
+    dedupe: ['react', 'react-dom', 'monaco-editor', '@monaco-editor/react', 'zustand'],
+  },
 
   // No proxy needed — the WebView calls the bridge server directly
   server: {

@@ -1,13 +1,15 @@
 /**
  * Modal shown after importing a workflow JSON.
- * Lets the user confirm/edit the name and pick a team to assign it to.
+ * Lets the user confirm/edit the name, pick a folder, and assign teams.
  *
  * Props:
- *   teams        — array of { id, name } team objects
- *   defaultName  — pre-filled workflow name from the JSON
- *   defaultTeamId — pre-selected team id (optional)
- *   onCancel     — () => void
- *   onImport     — (name: string, teamId: string) => void
+ *   teams         — array of { id, name } team objects
+ *   folders       — array of { id, name } folder objects
+ *   defaultName   — pre-filled workflow name from the JSON
+ *   defaultTeamIds — pre-selected team ids (optional)
+ *   defaultFolderId — pre-selected folder id (optional)
+ *   onCancel      — () => void
+ *   onImport      — (name: string, teamIds: string[], folderId: string|null) => void
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -15,13 +17,16 @@ import StyledSelect from './StyledSelect'
 
 export default function ImportWorkflowModal({
   teams = [],
+  folders = [],
   defaultName = 'Imported Workflow',
-  defaultTeamId,
+  defaultTeamIds,
+  defaultFolderId,
   onCancel,
   onImport,
 }) {
-  const [name, setName]   = useState(defaultName)
-  const [teamId, setTeamId] = useState(defaultTeamId || teams[0]?.id || '')
+  const [name, setName] = useState(defaultName)
+  const [teamIds, setTeamIds] = useState(() => defaultTeamIds || (teams[0] ? [teams[0].id] : []))
+  const [folderId, setFolderId] = useState(defaultFolderId ?? (folders[0]?.id || null))
   const nameRef = useRef(null)
 
   useEffect(() => {
@@ -33,13 +38,22 @@ export default function ImportWorkflowModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel])
 
-  const canSubmit = name.trim().length > 0 && !!teamId
+  function toggleTeam(id) {
+    setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
+  }
+
+  const canSubmit = name.trim().length > 0
 
   function submit(e) {
     e.preventDefault()
     if (!canSubmit) return
-    onImport?.(name.trim(), teamId)
+    onImport?.(name.trim(), teamIds, folderId || null)
   }
+
+  const folderOptions = [
+    { id: '', label: '— No folder (root) —' },
+    ...folders.map((f) => ({ id: f.id, label: f.name })),
+  ]
 
   return createPortal(
     <div className="bs-modal-overlay" onClick={onCancel}>
@@ -57,7 +71,7 @@ export default function ImportWorkflowModal({
             </svg>
           </div>
           <h3 className="bs-modal-title">Import workflow</h3>
-          <p className="bs-modal-sub">Confirm the name and assign it to a team.</p>
+          <p className="bs-modal-sub">Confirm the name, pick a folder, and assign teams.</p>
         </header>
 
         <div className="bs-modal-body">
@@ -73,18 +87,36 @@ export default function ImportWorkflowModal({
             />
           </div>
 
+          {folders.length > 0 && (
+            <div className="bs-field">
+              <label className="bs-label">Folder</label>
+              <StyledSelect
+                value={folderId || ''}
+                options={folderOptions}
+                onChange={(id) => setFolderId(id || null)}
+              />
+            </div>
+          )}
+
           <div className="bs-field">
-            <label className="bs-label">Team</label>
+            <label className="bs-label">Teams <span className="bs-label-hint">(optional)</span></label>
             {teams.length === 0 ? (
               <div className="bs-hint bs-hint-warn">
-                No teams yet. Create a team first in the Teams tab.
+                No teams yet — create one in the Teams tab.
               </div>
             ) : (
-              <StyledSelect
-                value={teamId}
-                options={teams.map((t) => ({ id: t.id, label: t.name }))}
-                onChange={setTeamId}
-              />
+              <div className="bs-checkbox-list">
+                {teams.map((t) => (
+                  <label key={t.id} className="bs-checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={teamIds.includes(t.id)}
+                      onChange={() => toggleTeam(t.id)}
+                    />
+                    <span>{t.name}</span>
+                  </label>
+                ))}
+              </div>
             )}
           </div>
         </div>

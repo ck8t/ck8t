@@ -1,0 +1,7 @@
+{
+  "id": "user_input",
+  "name": "User Input",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "user_input", "ui": "ui/user_input.js" }]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "slave_agent",
+  "name": "Slave Agent",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "slave_agent", "ui": "ui/slave_agent.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

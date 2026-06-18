@@ -144,13 +144,13 @@ const cardPortOverrides = {
   user_input:    { inputs: [],  outputs: 'auto' },
   schedule:      { inputs: [],  outputs: 'auto' },
   variables:     { inputs: [],  outputs: [] },
-  // Agent — one input (upstream text/json), multi-output (data, status, headers)
+  // Agent — one input (upstream text/json/any), multi-output (data, status, headers)
   agent:         {
-    inputs: [{ key: 'input', type: 'json' }],
+    inputs: [{ key: 'input', type: 'any' }],
     outputs: [{ key: 'data', type: 'string' }, { key: 'status', type: 'number' }, { key: 'headers', type: 'json' }],
   },
-  // Function — one input, one output
-  function:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'json' }] },
+  // Function — one input, one output; both 'any' so strings/numbers/arrays pass through
+  function:      { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'result', type: 'any' }] },
   // Response — multi-input: data, status, headers each individually connectable
   response:      {
     inputs: [{ key: 'data', type: 'json' }, { key: 'status', type: 'number' }, { key: 'headers', type: 'json' }],
@@ -161,31 +161,30 @@ const cardPortOverrides = {
     inputs: [{ key: 'input', type: 'any' }],
     outputs: [{ key: 'content', type: 'array' }],
   },
-  // API — input: upstream data (available as {{input}} in URL/body templates)
-  //        body: direct wire → becomes the request body (POST/PUT/PATCH)
+  // API — input: upstream data (available as {{input}} in URL/body templates); body: request body
   api:           {
-    inputs: [{ key: 'input', type: 'json' }, { key: 'body', type: 'json' }],
+    inputs: [{ key: 'input', type: 'any' }, { key: 'body', type: 'json' }],
     outputs: [{ key: 'data', type: 'json' }, { key: 'status', type: 'number' }, { key: 'headers', type: 'json' }],
   },
   // Merge — two separate inputs
   merge:         {
     inputs: [{ key: 'input1', type: 'any' }, { key: 'input2', type: 'any' }],
-    outputs: [{ key: 'merged', type: 'json' }],
+    outputs: [{ key: 'merged', type: 'any' }],
   },
   // Filter — multi-output
   filter:        {
-    inputs: [{ key: 'input', type: 'json' }],
-    outputs: [{ key: 'kept', type: 'json' }, { key: 'rejected', type: 'json' }, { key: 'count', type: 'number' }],
+    inputs: [{ key: 'input', type: 'any' }],
+    outputs: [{ key: 'kept', type: 'array' }, { key: 'rejected', type: 'array' }, { key: 'count', type: 'number' }],
   },
   // Aggregate — multi-output
   aggregate:     {
-    inputs: [{ key: 'input', type: 'json' }],
+    inputs: [{ key: 'input', type: 'any' }],
     outputs: [{ key: 'result', type: 'any' }, { key: 'count', type: 'number' }],
   },
   // Sort — multi-output
   sort:          {
-    inputs: [{ key: 'input', type: 'json' }],
-    outputs: [{ key: 'sorted', type: 'json' }, { key: 'count', type: 'number' }],
+    inputs: [{ key: 'input', type: 'any' }],
+    outputs: [{ key: 'sorted', type: 'array' }, { key: 'count', type: 'number' }],
   },
   // Error Handler — multi-output
   error_handler: {
@@ -235,15 +234,15 @@ const cardPortOverrides = {
   // ─── Data transformation ───────────────────────────────────────────────────
   text_template: { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'string' }] },
   json_map:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'json' }] },
-  json_path:     { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'json' }] },
+  json_path:     { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'result', type: 'any' }] },
 
   // ─── Control flow ──────────────────────────────────────────────────────────
   // condition: evaluates expression against upstream input
   condition:     { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'conditionResult', type: 'boolean' }, { key: 'selectedPath', type: 'json' }] },
   // loop/for_each/for_loop: server-side, but port visible for wiring
   loop:          { inputs: [{ key: 'collection', type: 'json' }], outputs: [{ key: 'results', type: 'array' }, { key: 'iterations', type: 'number' }] },
-  for_loop:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
-  for_each:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
+  for_loop:      { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
+  for_each:      { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
   // parallel: server-side; wire input for branch fan-out
   parallel:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'results', type: 'array' }, { key: 'winner', type: 'json' }] },
 

@@ -14,6 +14,7 @@ import McpServersPanel from './McpServersPanel'
 import AiProvidersPanel from './AiProvidersPanel'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { GETTING_STARTED_WORKFLOWS } from '../stores/getting-started-workflows'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useBrowserProvidersStore } from '../api/browser-providers-store'
 import { detectServer } from '../api/server-status'
@@ -181,12 +182,20 @@ const DevToolsIcon = (p) => (
   </svg>
 )
 
+const GettingStartedIcon = (p) => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+  </svg>
+)
+
 const SETTINGS_TABS = [
   { id: 'shortcuts', label: 'Keyboard Shortcuts', Icon: KeyboardIcon },
   { id: 'mcp', label: 'MCP Servers', Icon: McpIcon },
   { id: 'tips', label: 'Tips & Tricks', Icon: TipsIcon },
   { id: 'llm', label: 'LLM Provider Configuration', Icon: LlmIcon },
   { id: 'audit', label: 'AI Audit', Icon: AuditIcon },
+  { id: 'getting_started', label: 'Getting Started', Icon: GettingStartedIcon },
   { id: 'appconfig', label: 'App Config', Icon: AppConfigIcon, extensionOnly: true },
   { id: 'devtools', label: 'Developer Tools', Icon: DevToolsIcon, extensionOnly: true },
 ]
@@ -225,6 +234,7 @@ export default function SettingsTab() {
         {activeSection === 'appconfig' && <AppConfigPanel />}
         {activeSection === 'audit' && <AiAuditSection />}
         {activeSection === 'devtools' && <DevToolsSection />}
+        {activeSection === 'getting_started' && <GettingStartedSection />}
       </div>
     </div>
   )
@@ -2357,6 +2367,130 @@ function DbExplorerTab() {
               </table>
             </div>
           </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── Getting Started Section ─────────────────────────────────────────── */
+
+const GS_PALETTE = ['#6366f1','#8b5cf6','#ec4899','#3b82f6','#10b981','#f59e0b','#ef4444','#06b6d4','#f97316','#a855f7']
+function gsColor(id) {
+  let h = 5381
+  for (let i = 0; i < id.length; i++) h = ((h << 5) + h) ^ id.charCodeAt(i)
+  return GS_PALETTE[Math.abs(h) % GS_PALETTE.length]
+}
+function parseGsName(name) {
+  const dash = name.indexOf(' — ')
+  if (dash === -1) return { label: name, chip: null }
+  const part1 = name.slice(0, dash)
+  const chip = name.slice(dash + 3)
+  const dot = part1.indexOf(' · ')
+  const label = dot === -1 ? part1 : part1.slice(dot + 3)
+  const num = dot === -1 ? '' : part1.slice(0, dot)
+  return { num, label, chip }
+}
+
+function GettingStartedSection() {
+  const workflows = useWorkspaceStore((s) => s.workflows)
+  const restoreGettingStarted = useWorkspaceStore((s) => s.restoreGettingStarted)
+  const [confirming, setConfirming] = useState(false)
+  const [restored, setRestored] = useState(false)
+  const [query, setQuery] = useState('')
+
+  const gsCount = workflows.filter((w) => w.folderId === 'folder_getting_started').length
+  const q = query.toLowerCase()
+  const visible = GETTING_STARTED_WORKFLOWS.filter((w) =>
+    !q || w.name.toLowerCase().includes(q) || (w.description || '').toLowerCase().includes(q)
+  )
+
+  function handleRestore() {
+    restoreGettingStarted()
+    setConfirming(false)
+    setRestored(true)
+    setTimeout(() => setRestored(false), 3000)
+  }
+
+  return (
+    <div className="bs-settings-pane bs-gs-pane">
+      {/* Header */}
+      <div className="bs-gs-hero">
+        <div className="bs-gs-hero-icon">
+          <GettingStartedIcon style={{ width: 18, height: 18, color: '#818cf8' }} />
+        </div>
+        <div>
+          <div className="bs-gs-hero-title">Getting Started</div>
+          <div className="bs-gs-hero-sub">45 real working demos — one for every block type. Open on canvas, run, see results.</div>
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="bs-gs-stats">
+        <div className="bs-gs-stat2">
+          <span className="bs-gs-stat2-n" style={{ color: '#818cf8' }}>{gsCount}</span>
+          <span className="bs-gs-stat2-l">in folder</span>
+        </div>
+        <div className="bs-gs-stat2-div" />
+        <div className="bs-gs-stat2">
+          <span className="bs-gs-stat2-n">45</span>
+          <span className="bs-gs-stat2-l">available</span>
+        </div>
+        <div className="bs-gs-stat2-div" />
+        <div className="bs-gs-stat2">
+          <span className="bs-gs-stat2-n" style={{ color: '#34d399' }}>{45 - gsCount}</span>
+          <span className="bs-gs-stat2-l">deleted</span>
+        </div>
+
+        <div style={{ flex: 1 }} />
+        {!confirming ? (
+          <button className="bs-gs-restore-btn" onClick={() => { setConfirming(true); setRestored(false) }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            Restore all 45
+          </button>
+        ) : (
+          <div className="bs-gs-confirm-inline">
+            <span className="bs-gs-confirm-q">Replace all 45 demos?</span>
+            <button className="bs-gs-confirm-yes" onClick={handleRestore}>Yes</button>
+            <button className="bs-gs-confirm-no" onClick={() => setConfirming(false)}>No</button>
+          </div>
+        )}
+      </div>
+      {restored && <div className="bs-gs-toast">All 45 Getting Started workflows restored.</div>}
+
+      {/* Search */}
+      <div className="bs-gs-search-row">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input
+          className="bs-gs-search"
+          placeholder="Filter demos by name or block…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query && <button className="bs-gs-search-clear" onClick={() => setQuery('')}>×</button>}
+        <span className="bs-gs-search-count">{visible.length}</span>
+      </div>
+
+      {/* Demo grid */}
+      <div className="bs-gs-grid">
+        {visible.map((wf) => {
+          const { num, label, chip } = parseGsName(wf.name)
+          const color = gsColor(wf.id)
+          return (
+            <div key={wf.id} className="bs-gs-dcard" style={{ '--gc': color }}>
+              <div className="bs-gs-dcard-accent" />
+              <div className="bs-gs-dcard-body">
+                <div className="bs-gs-dcard-top">
+                  {num && <span className="bs-gs-dcard-num">{num}</span>}
+                  <span className="bs-gs-dcard-name">{label}</span>
+                </div>
+                {chip && <span className="bs-gs-dcard-chip">{chip}</span>}
+              </div>
+            </div>
+          )
+        })}
+        {visible.length === 0 && (
+          <div className="bs-gs-empty">No demos match "{query}"</div>
         )}
       </div>
     </div>

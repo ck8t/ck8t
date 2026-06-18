@@ -1,0 +1,8 @@
+{
+  "id": "postgresql",
+  "name": "Postgresql",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "postgresql", "ui": "ui/postgresql.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}

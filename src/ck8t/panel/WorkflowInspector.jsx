@@ -12,7 +12,6 @@
  */
 import { useMemo, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
-import StyledSelect from '../components/StyledSelect'
 
 export default function WorkflowInspector({ workflowId }) {
   const workflows = useWorkspaceStore((s) => s.workflows)
@@ -84,17 +83,31 @@ export default function WorkflowInspector({ workflowId }) {
             </div>
 
             <div className="bs-field">
-              <label className="bs-label">Team</label>
-              <StyledSelect
-                value={wf.teamId || ''}
-                options={[
-                  { id: '', label: '— Unassigned —' },
-                  ...teams.map((t) => ({ id: t.id, label: t.name }))
-                ]}
-                onChange={(id) => updateWorkflow(wf.id, { teamId: id || undefined })}
-                placeholder="— Unassigned —"
-              />
-              <div className="bs-hint">Controls which team owns this workflow in the sidebar.</div>
+              <label className="bs-label">Teams <span className="bs-label-hint">(optional)</span></label>
+              {teams.length === 0 ? (
+                <div className="bs-hint bs-hint-warn">No teams yet.</div>
+              ) : (
+                <div className="bs-checkbox-list">
+                  {teams.map((t) => {
+                    const teamIds = wf.teamIds || (wf.teamId ? [wf.teamId] : [])
+                    const checked = teamIds.includes(t.id)
+                    return (
+                      <label key={t.id} className="bs-checkbox-item">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const next = checked ? teamIds.filter((x) => x !== t.id) : [...teamIds, t.id]
+                            updateWorkflow(wf.id, { teamIds: next, teamId: next[0] || undefined })
+                          }}
+                        />
+                        <span>{t.name}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="bs-hint">Assign this workflow to one or more teams.</div>
             </div>
 
             <div className="bs-field">

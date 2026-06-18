@@ -14,6 +14,7 @@ import { syncWorkspaceToServer, loadWorkspaceFromServer } from '../api/workspace
 import { useLlmConfigStore } from './llm-config-store'
 import { getBlock } from '../blocks/registry'
 import _demo from './demo-workflow.json'
+import { GETTING_STARTED_WORKFLOWS, GETTING_STARTED_FOLDER_ID, GETTING_STARTED_IDS } from './getting-started-workflows'
 
 // demo-workflow.json canonical format:
 //   { seedWorkspaceId, seedTeamId, …, skill, agent1, agent2, workflow: { id, name, teamId, nodes, edges, subBlockValues, createdAt } }
@@ -24,6 +25,7 @@ const SEED_WORKSPACE_ID = _demo.seedWorkspaceId || 'ws_default'
 const SEED_TEAM_ID      = _demo.seedTeamId      || 't_fullstack'
 const SEED_POOL_ID      = _demo.seedPoolId      || 'pool_default'
 const SEED_WORKFLOW_ID  = _demo.seedWorkflowId  || _w.id || 'wf_demo'
+const SEED_FOLDER_ID    = 'folder_getting_started'
 const demoSkill         = _demo.skill  || null
 const demoAgent1        = _demo.agent1 || null
 const demoAgent2        = _demo.agent2 || null
@@ -31,6 +33,8 @@ const demoWorkflow      = {
   id:             _w.id             || SEED_WORKFLOW_ID,
   name:           _w.name           || 'Demo Workflow',
   teamId:         _w.teamId         || SEED_TEAM_ID,
+  teamIds:        _w.teamIds        || [_w.teamId || SEED_TEAM_ID],
+  folderId:       _w.folderId       !== undefined ? _w.folderId : SEED_FOLDER_ID,
   nodes:          _w.nodes          || [],
   edges:          _w.edges          || [],
   subBlockValues: _w.subBlockValues || {},
@@ -51,6 +55,10 @@ const seedWorkspaceId = SEED_WORKSPACE_ID
 const seedTeamId      = SEED_TEAM_ID
 const seedPoolId      = SEED_POOL_ID
 const seedWorkflowId  = SEED_WORKFLOW_ID
+const seedFolderId    = SEED_FOLDER_ID
+const seedAgent1Id    = _demo.seedAgent1Id || demoAgent1?.id || ''
+const seedAgent2Id    = _demo.seedAgent2Id || demoAgent2?.id || ''
+const seedSkillId     = _demo.seedSkillId  || demoSkill?.id  || ''
 
 // Only include seed agents/skills if the JSON actually defines them
 const seedAgents = [demoAgent1, demoAgent2].filter(Boolean)
@@ -66,7 +74,8 @@ const initialState = {
   agentPools: [{ id: seedPoolId, name: 'Default Pool', teamId: seedTeamId, agentIds: seedAgents.map((a) => a.id) }],
   agents:    seedAgents,
   skills:    seedSkills,
-  workflows: [demoWorkflow],
+  workflowFolders: [{ id: seedFolderId, name: 'Getting Started' }],
+  workflows: [demoWorkflow, ...GETTING_STARTED_WORKFLOWS],
   /**
    * Master/slave canvas registry — tracks which slave_agent blocks are
    * registered to which master_agent block.
@@ -160,8 +169,8 @@ export const useWorkspaceStore = create()(
         },
 
         // ---------- Teams ----------
-        createTeam(name) {
-          const team = { id: `t_${uuid()}`, name, workspaceId: get().activeWorkspaceId, agentPoolIds: [] }
+        createTeam(name, partial = {}) {
+          const team = { id: `t_${uuid()}`, name, workspaceId: get().activeWorkspaceId, agentPoolIds: [], color: partial.color || '' }
           set((s) => ({ teams: [...s.teams, team] }))
           return team
         },
@@ -200,6 +209,7 @@ export const useWorkspaceStore = create()(
           const agent = {
             id: `ag_${uuid()}`,
             name: partial.name || 'New Agent',
+            color: partial.color || '',
             poolId,
             model: partial.model || useLlmConfigStore.getState().models?.[0]?.id || 'gpt-4.1',
             provider: partial.provider,
@@ -264,12 +274,32 @@ export const useWorkspaceStore = create()(
           set((s) => ({ skills: s.skills.filter((k) => k.id !== id) }))
         },
 
+        // ---------- Workflow Folders ----------
+        createWorkflowFolder(name) {
+          const folder = { id: `folder_${uuid()}`, name }
+          set((s) => ({ workflowFolders: [...s.workflowFolders, folder] }))
+          return folder
+        },
+        renameWorkflowFolder(id, name) {
+          set((s) => ({ workflowFolders: s.workflowFolders.map((f) => (f.id === id ? { ...f, name } : f)) }))
+        },
+        deleteWorkflowFolder(id) {
+          set((s) => ({
+            workflowFolders: s.workflowFolders.filter((f) => f.id !== id),
+            workflows: s.workflows.map((w) => w.folderId === id ? { ...w, folderId: null } : w),
+          }))
+        },
+
         // ---------- Workflows ----------
-        createWorkflow(name, teamId, partial = {}) {
+        createWorkflow(name, teamIds, partial = {}) {
+          const ids = Array.isArray(teamIds) ? teamIds : (teamIds ? [teamIds] : [])
           const wf = {
             id: `wf_${uuid()}`,
             name,
-            teamId,
+            teamIds: ids,
+            teamId: ids[0] || undefined,
+            folderId: partial.folderId || null,
+            color: partial.color || '',
             description: partial.description || '',
             nodes: [],
             edges: [],
@@ -294,11 +324,14 @@ export const useWorkspaceStore = create()(
          * Always assigns a fresh id to avoid collisions.
          * Returns the created workflow.
          */
-        importWorkflow(name, teamId, { nodes, edges, subBlockValues }) {
+        importWorkflow(name, teamIds, { nodes, edges, subBlockValues, folderId } = {}) {
+          const ids = Array.isArray(teamIds) ? teamIds : (teamIds ? [teamIds] : [])
           const wf = {
             id: `wf_${uuid()}`,
             name,
-            teamId,
+            teamIds: ids,
+            teamId: ids[0] || undefined,
+            folderId: folderId || null,
             description: '',
             nodes: nodes || [],
             edges: edges || [],
@@ -395,6 +428,22 @@ export const useWorkspaceStore = create()(
           return count
         },
 
+        /**
+         * Remove all workflows in the Getting Started folder and re-seed them
+         * from the canonical GETTING_STARTED_WORKFLOWS list.
+         */
+        restoreGettingStarted() {
+          set((s) => {
+            const kept = s.workflows.filter((w) => !GETTING_STARTED_IDS.has(w.id))
+            return {
+              workflows: [...kept, ...GETTING_STARTED_WORKFLOWS],
+              workflowFolders: s.workflowFolders?.some((f) => f.id === GETTING_STARTED_FOLDER_ID)
+                ? s.workflowFolders
+                : [...(s.workflowFolders || []), { id: GETTING_STARTED_FOLDER_ID, name: 'Getting Started' }],
+            }
+          })
+        },
+
         deleteWorkflow(id) {
           set((s) => ({
             workflows: s.workflows.filter((w) => w.id !== id),
@@ -420,6 +469,7 @@ export const useWorkspaceStore = create()(
             agentPools: s.agentPools,
             agents: s.agents,
             skills: s.skills,
+            workflowFolders: s.workflowFolders || [],
             // Ensure every workflow has subBlockValues (never null) for Postgres NOT NULL constraint
             workflows: s.workflows.map((w) => ({
               ...w,
@@ -462,6 +512,7 @@ export const useWorkspaceStore = create()(
             agentPools: snapshot.agentPools?.length ? snapshot.agentPools : get().agentPools,
             agents: snapshot.agents?.length ? snapshot.agents : get().agents,
             skills: snapshot.skills?.length ? snapshot.skills : get().skills,
+            workflowFolders: snapshot.workflowFolders?.length ? snapshot.workflowFolders : get().workflowFolders,
             workflows: snapshot.workflows?.length ? snapshot.workflows : get().workflows,
           })
           return true
@@ -473,7 +524,7 @@ export const useWorkspaceStore = create()(
       }),
       {
         name: 'ck8t/workspace',
-        version: 8,
+        version: 9,
         // In VS Code extension mode, skip localStorage rehydration entirely.
         // The SQLite snapshot (sent as 'workspaceSnapshot' from the extension host)
         // is the authoritative source of truth. If localStorage rehydrates AFTER
@@ -481,11 +532,19 @@ export const useWorkspaceStore = create()(
         // imported workflows. skipHydration avoids that race entirely.
         skipHydration: typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension',
         migrate: (persisted, fromVersion) => {
-          // Any older-version blob is discarded in favor of the bundled seed.
-          // Bump whenever the demo topology changes (new node/edge) so users
-          // who already ran the studio get the updated canvas instead of a
-          // stale rehydrate.
           if (!persisted || fromVersion < 8) return initialState
+          if (fromVersion < 9) {
+            // Add workflowFolders if missing
+            if (!persisted.workflowFolders) {
+              persisted.workflowFolders = [{ id: seedFolderId, name: 'Getting Started' }]
+            }
+            // Normalize teamId → teamIds on all existing workflows
+            persisted.workflows = (persisted.workflows || []).map((w) => ({
+              ...w,
+              teamIds: w.teamIds || (w.teamId ? [w.teamId] : []),
+              folderId: w.folderId !== undefined ? w.folderId : null,
+            }))
+          }
           return persisted
         },
         /** Ensure seed entities always exist on rehydrate — even if the user
@@ -495,28 +554,37 @@ export const useWorkspaceStore = create()(
           const merged = { ...currentState, ...persistedState }
 
           // Re-inject seed entities if missing
+          if (!merged.workflowFolders?.find((f) => f.id === seedFolderId)) {
+            merged.workflowFolders = [...(merged.workflowFolders || []), { id: seedFolderId, name: 'Getting Started' }]
+          }
           if (!merged.workflows?.find((w) => w.id === seedWorkflowId)) {
             merged.workflows = [...(merged.workflows || []), demoWorkflow]
           }
-          if (!merged.agents?.find((a) => a.id === seedAgent1Id)) {
-            merged.agents = [...(merged.agents || []), demoAgent1]
+          if (seedAgent1Id && !merged.agents?.find((a) => a.id === seedAgent1Id)) {
+            merged.agents = [...(merged.agents || []), demoAgent1].filter(Boolean)
           }
-          if (!merged.agents?.find((a) => a.id === seedAgent2Id)) {
-            merged.agents = [...(merged.agents || []), demoAgent2]
+          if (seedAgent2Id && !merged.agents?.find((a) => a.id === seedAgent2Id)) {
+            merged.agents = [...(merged.agents || []), demoAgent2].filter(Boolean)
           }
-          if (!merged.skills?.find((s) => s.id === seedSkillId)) {
-            merged.skills = [...(merged.skills || []), demoSkill]
+          if (seedSkillId && !merged.skills?.find((s) => s.id === seedSkillId)) {
+            merged.skills = [...(merged.skills || []), demoSkill].filter(Boolean)
           }
           if (!merged.teams?.find((t) => t.id === seedTeamId)) {
             merged.teams = [...(merged.teams || []), { id: seedTeamId, name: 'fullstack builders', workspaceId: seedWorkspaceId, agentPoolIds: [seedPoolId] }]
           }
           if (!merged.agentPools?.find((p) => p.id === seedPoolId)) {
-            merged.agentPools = [...(merged.agentPools || []), { id: seedPoolId, name: 'Default Pool', teamId: seedTeamId, agentIds: [seedAgent1Id, seedAgent2Id] }]
+            merged.agentPools = [...(merged.agentPools || []), { id: seedPoolId, name: 'Default Pool', teamId: seedTeamId, agentIds: [seedAgent1Id, seedAgent2Id].filter(Boolean) }]
           }
           // Ensure activeWorkflowId is valid
           if (!merged.activeWorkflowId || !merged.workflows?.find((w) => w.id === merged.activeWorkflowId)) {
             merged.activeWorkflowId = seedWorkflowId
           }
+          // Normalize teamId → teamIds on rehydrated workflows that pre-date v9
+          merged.workflows = (merged.workflows || []).map((w) => ({
+            ...w,
+            teamIds: w.teamIds || (w.teamId ? [w.teamId] : []),
+            folderId: w.folderId !== undefined ? w.folderId : null,
+          }))
           return merged
         },
       }

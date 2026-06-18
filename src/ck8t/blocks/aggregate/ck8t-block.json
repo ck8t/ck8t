@@ -1,0 +1,8 @@
+{
+  "id": "aggregate",
+  "name": "Aggregate",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "aggregate", "ui": "ui/aggregate.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

@@ -56,6 +56,10 @@ const registry = {
   skill: Core.SkillBlock,
   image_url_preview: Core.ImageUrlPreviewBlock,
   image_url_to_base64: Core.ImageUrlToBase64Block,
+  // NS9 knowledge graph blocks
+  ns9_query: Core.Ns9QueryBlock,
+  ns9_rlhf: Core.Ns9RlhfBlock,
+  ns9_ingest: Core.Ns9IngestBlock,
 }
 
 /**
@@ -280,6 +284,7 @@ export const CATEGORY_CONFIG = {
       { id: 'databases', label: 'Databases',     types: ['postgresql', 'redis', 'mongodb'] },
       { id: 'messaging', label: 'Messaging',     types: ['smtp', 'slack'] },
       { id: 'protocols', label: 'Protocols',     types: ['mcp'] },
+      { id: 'ns9',       label: 'NS9',           types: ['ns9_query', 'ns9_rlhf', 'ns9_ingest'] },
       { id: 'security',  label: 'Security',      types: ['crypto'] },
     ],
   },

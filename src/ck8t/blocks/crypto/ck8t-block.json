@@ -1,0 +1,8 @@
+{
+  "id": "crypto",
+  "name": "Crypto",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "crypto", "ui": "ui/crypto.js" }],
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
+}

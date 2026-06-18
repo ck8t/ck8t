@@ -1,0 +1,8 @@
+{
+  "id": "mongodb",
+  "name": "Mongodb",
+  "version": "1.0.0",
+  "type": "core",
+  "blocks": [{ "type": "mongodb", "ui": "ui/mongodb.js" }],
+  "runners": { "extension": "runners/extension.js" }
+}
