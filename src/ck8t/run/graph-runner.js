@@ -26,9 +26,12 @@ import { useWorkflowStore } from '../stores/workflow-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { useAiProvidersStore, getAiProviderModelOptions } from '../stores/ai-providers-store'
 import { resolvePortType, isTypeCompatible, getCardPorts } from '../panel/io-registry'
-import { getBlock, customBrowserBlockRunners } from '../blocks/registry'
+import { getBlock, customBrowserBlockRunners, coreBlockRunners } from '../blocks/registry'
 import { useMcpProgressStore } from '../stores/mcp-progress-store'
 import { useBlockDebugStore } from '../stores/block-debug-store'
+import { useBlockDebuggerStore } from '../debug/block-debugger-store'
+import { BlockDebugEngine } from '../debug/block-debug-engine'
+import { startExtDebugSession } from '../debug/ext-debug-client'
 
 // Validate a runtime value against a declared port type.
 // Returns an error string if mismatch, or null if OK.
@@ -521,144 +524,158 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
 /* Per-block execution                                                        */
 /* ------------------------------------------------------------------------- */
 
-async function runNode({ node, values, input, outputs, inputsByHandle, allNodes = [], subBlockValues = {} }) {
-  const type = node.data?.blockType
-  switch (type) {
-    case 'starter':
-    case 'user_input':
-    case 'audio_input':
-      return outputs[node.id] // already seeded
-    case 'response':
-      return runResponseNode({ values, input, inputsByHandle, outputs })
-    case 'agent':
-      return await runAgentNode({ node, values, input })
-    case 'mcp':
-      return await runMcpNode({ values, input })
-    case 'function':
-      return runFunctionNode({ values, input, nodeId: node.id })
-    case 'if_else':
-      return runIfElseNode({ values, input })
-    case 'if_elseif_else':
-      return runIfElseIfElseNode({ values, input })
-    case 'switch':
-      return runSwitchNode({ values, input })
-    case 'for_loop': {
-      const count = Math.max(0, Math.min(10000, Number(values.count ?? 10)))
-      const iterations = Array.from({ length: count }, (_, i) => ({ i, index: i }))
-      return { iterations, last: count > 0 ? iterations[count - 1] : null }
-    }
-    case 'for_each': {
-      const arr = Array.isArray(input) ? input : (input != null ? [input] : [])
-      return { iterations: arr, last: arr.length > 0 ? arr[arr.length - 1] : null }
-    }
-    case 'json_validator':
-      return runJsonValidator({ values, input })
-    case 'save_to_files':
-      return runSaveToFiles({ values, input })
-    case 'show_preview':
-      // Preview-only sink — pass the upstream payload through untouched so
-      // the card's json-preview body can render it (see WorkflowNode).
-      return input
-    case 'image_url_preview':
-      return runImageUrlPreviewNode({ input })
-    case 'image_url_to_base64':
-      return await runImageUrlToBase64Node({ input })
-    case 'json_map':
-      return runJsonMapNode({ values, input })
-    case 'text_template':
-      return runTextTemplateNode({ values, input })
-    case 'json_path':
-      return runJsonPathNode({ values, input })
-    case 'mapper':
-      return await runMapperNode({ values, input })
-    case 'skill':
-      return await runSkillNode({ values, input })
-    // ── Server-parity blocks ──────────────────────────────────────────────
-    case 'api':
-      return await runApiNode({ values, input, inputsByHandle })
-    case 'delay':
-      return await runDelayNode({ values, input })
-    case 'wait':
-      return await runWaitNode({ values, input })
-    case 'filter':
-      return runFilterNode({ values, input })
-    case 'sort':
-      return runSortNode({ values, input })
-    case 'aggregate':
-      return runAggregateNode({ values, input })
-    case 'merge':
-      return runMergeNode({ values, input })
-    case 'crypto':
-      return await runCryptoNode({ values, input })
-    case 'error_handler':
-      return runErrorHandlerNode({ values, input })
-    case 'http_response':
-      return runHttpResponseNode({ values, input, inputsByHandle })
-    case 'sub_workflow': {
-      const wfId = values?.workflowId
-      if (!wfId) throw new Error('Sub-Workflow block: no workflow selected. Open the Inspector and select a workflow to execute.')
-      throw new Error('Sub-Workflow block requires the convengine backend to run. Connect to convengine to execute sub-workflows.')
-    }
-    case 'ai_classifier':
-      return await runAiClassifierNode({ node, values, input })
-    case 'variables':
-      return runVariablesNode({ values })
-    case 'condition':
-      return runConditionNode({ values, input })
-    case 'router_v2':
-      return await runRouterV2Node({ node, values, input })
-    case 'chain_of_thought':
-      return await runChainOfThoughtNode({ node, values, input })
-    case 'slave_agent':
-      return await runSlaveAgentNode({ node, values, input })
-    case 'master_agent':
-      return await runMasterAgentNode({ node, values, input, allNodes, subBlockValues })
-    case 'ns9_query':
-      return await runNs9QueryBlock({ values, input })
-    case 'ns9_rlhf':
-      return await runNs9RlhfBlock({ values, input })
-    case 'ns9_ingest':
-      return await runNs9IngestBlock({ values })
-    case 'loop':
-      throw new Error('Loop block: not yet supported in standalone client-side execution. Use for_loop or for_each blocks for iteration.')
-    case 'parallel': {
-      // Client-side: parallel block is a pass-through trigger.
-      // True concurrent fan-out is handled by the graph executor BFS naturally.
-      const results = input != null ? [input] : []
-      return { results, winner: input ?? null }
-    }
-    case 'table':
-      throw new Error('Table block: not yet supported in standalone mode. Use the api or postgresql blocks to query data.')
-    case 'slack':
-      throw new Error('Slack block: not yet supported in standalone mode. Slack integration is planned — see todo.md for details.')
-    case 'smtp':
-      throw new Error('SMTP block: not yet supported in standalone mode. Direct SMTP support is planned.')
-    case 'postgresql':
-      throw new Error('PostgreSQL block: not yet supported in standalone mode. Configure host/credentials and check the ck8t-server bridge.')
-    case 'redis':
-      throw new Error('Redis block: not yet supported in standalone mode. Direct Redis support is planned.')
-    case 'mongodb':
-      throw new Error('MongoDB block: not yet supported in standalone mode. Direct MongoDB support is planned.')
-    case 'schedule':
-      return { firedAt: new Date().toISOString() }
-    case 'webhook_request':
-      return { body: input, headers: {}, query: {} }
-    default: {
-      const communityRun = customBrowserBlockRunners.get(type)
-      if (communityRun) {
-        const blkCfg = getBlock(type)
-        const progressFn = blkCfg?.hasProgress
-          ? (data) => useMcpProgressStore.getState().setProgress({ nodeId: node.id, ...data })
-          : undefined
-        try {
-          return await communityRun({ values, input, inputsByHandle, outputs, node, allNodes, subBlockValues, progress: progressFn })
-        } finally {
-          if (progressFn) useMcpProgressStore.getState().clearProgress()
-        }
+/**
+ * If the Debugger tab currently has this exact node/block open with live
+ * (non-disabled, non-muted) breakpoints on its browser-executable file
+ * ('client.js' for normal blocks — or 'extension.js' for the few blocks
+ * where client.js is just a re-export of it — and the function block's own
+ * code for 'function'), return what's needed to route this run through the
+ * debug engine instead of the normal runner. Mirrors Daakia's "same Send
+ * button, backend decides routing based on whether breakpoints exist"
+ * pattern.
+ */
+function getActiveDebugRun(nodeId, blockType) {
+  const dbg = useBlockDebuggerStore.getState()
+  if (dbg.nodeId !== nodeId || dbg.blockType !== blockType) return null
+  if (dbg.breakpointsMuted) return null
+  if (dbg.status === 'running' || dbg.status === 'paused') return null
+
+  if (blockType === 'function') {
+    const file = dbg.files.find(f => f.runnerType === 'function')
+    if (!file) return null
+    const lines = (dbg.breakpoints[file.name] || []).filter(l => !(dbg.disabledBreakpoints[file.name] || []).includes(l))
+    if (lines.length === 0) return null
+    return { mode: 'script', file: file.name, breakpoints: lines }
+  }
+
+  let file = dbg.files.find(f => f.runnerType === 'client') || dbg.files.find(f => f.name === 'client.js')
+  if (!file) return null
+
+  // A few blocks (master_agent, slave_agent, chain_of_thought — ESM core blocks;
+  // some CJS community blocks too) ship a client.js that's a pure re-export of
+  // extension.js — that's still what executes in-browser via canvas Run, but
+  // the real run() body (and thus the only place a breakpoint makes sense)
+  // lives in the extension.js tab.
+  const isReExport = /^export\s*\{\s*default\s*\}\s*from\s*['"]\.\/extension\.js['"]/m.test(file.content)
+    || /module\.exports\s*=\s*require\(\s*['"]\.\/extension\.js['"]\s*\)/.test(file.content)
+  if (isReExport) {
+    const extFile = dbg.files.find(f => f.runnerType === 'extension')
+    if (extFile) file = extFile
+  }
+
+  // Extension.js has its own breakpoints AND client.js is not a re-export —
+  // the block delegates Node work via fetch('/ck8t/run-block') inside run().
+  // Signal runNode() to attach __ck8tExtDebug to ctx rather than routing to
+  // the in-browser engine (which can't load Node modules like pdf-lib).
+  if (!isReExport) {
+    const extFile = dbg.files.find(f => f.runnerType === 'extension' || f.name === 'extension.js')
+    if (extFile) {
+      const extLines = (dbg.breakpoints[extFile.name] || [])
+        .filter(l => !(dbg.disabledBreakpoints[extFile.name] || []).includes(l))
+      if (extLines.length > 0) {
+        return { extDebug: true, file: extFile.name, breakpoints: extLines }
       }
-      return input
     }
   }
+
+  const lines = (dbg.breakpoints[file.name] || []).filter(l => !(dbg.disabledBreakpoints[file.name] || []).includes(l))
+  if (lines.length === 0) return null
+  return { mode: 'module', file: file.name, breakpoints: lines, source: file.content }
+}
+
+async function runThroughDebugger(dbgRun, { blockType, ctx }) {
+  const store = useBlockDebuggerStore.getState()
+  const engine = new BlockDebugEngine()
+  store.setEngine(engine)
+  store.setRunning()
+
+  const runOpts = {
+    mode: dbgRun.mode,
+    breakpoints: dbgRun.breakpoints,
+    file: dbgRun.file,
+    onPaused: (file, line, vars, cs) => useBlockDebuggerStore.getState().setPaused(file, line, vars, cs),
+    onResumed: () => useBlockDebuggerStore.getState().setResumed(),
+    onCompleted: (output) => useBlockDebuggerStore.getState().setCompleted(output),
+    onError: (msg) => useBlockDebuggerStore.getState().setError(msg),
+    onLog: (entry) => useBlockDebuggerStore.getState().addLog(entry),
+  }
+
+  if (dbgRun.mode === 'module') {
+    runOpts.source = dbgRun.source
+    runOpts.blockType = blockType
+    runOpts.ctx = ctx
+  } else {
+    runOpts.source = ctx.values?.code || 'return input'
+    runOpts.input = ctx.input
+    runOpts.values = ctx.values
+  }
+
+  store.setLastDebugRun({ ...runOpts, blockType })
+  try {
+    return await engine.run(runOpts)
+  } catch (e) {
+    if (e?.isDebugStop) useBlockDebuggerStore.getState().setStopped()
+    throw e
+  } finally {
+    store.setEngine(null)
+  }
+}
+
+async function runNode({ node, values, input, outputs, inputsByHandle, allNodes = [], subBlockValues = {} }) {
+  const type = node.data?.blockType
+
+  // Seed blocks are seeded before the BFS loop; defensive guard only
+  if (type === 'starter' || type === 'user_input' || type === 'audio_input') return outputs[node.id]
+
+  const runner = coreBlockRunners.get(type) ?? customBrowserBlockRunners.get(type)
+  if (runner) {
+    const blkCfg = getBlock(type)
+    const progressFn = blkCfg?.hasProgress
+      ? (data) => useMcpProgressStore.getState().setProgress({ nodeId: node.id, ...data })
+      : undefined
+    const ctx = buildRunCtx({ node, values, input, outputs, inputsByHandle, allNodes, subBlockValues })
+    ctx.progress = progressFn ?? null
+    try {
+      const dbgRun = getActiveDebugRun(node.id, type)
+      if (dbgRun) {
+        if (dbgRun.extDebug) {
+          // Extension.js path: register WS session BEFORE runner() fires the
+          // /ck8t/run-block POST so the bridge has a socket ready to push events.
+          const sessionId = (crypto.randomUUID?.() ?? `ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+          const dbgStore = useBlockDebuggerStore.getState()
+          dbgStore.setRunning()
+          let handle
+          try {
+            handle = await startExtDebugSession({
+              sessionId,
+              onPaused:    (file, line, vars, cs) => useBlockDebuggerStore.getState().setPaused(file, line, vars, cs),
+              onResumed:   ()       => useBlockDebuggerStore.getState().setResumed(),
+              onCompleted: (output) => { useBlockDebuggerStore.getState().setCompleted(output); useBlockDebuggerStore.getState().clearRemoteSession() },
+              onError:     (msg)    => { useBlockDebuggerStore.getState().setError(msg);        useBlockDebuggerStore.getState().clearRemoteSession() },
+              onLog:       (entry)  => useBlockDebuggerStore.getState().addLog(entry),
+            })
+          } catch (e) {
+            dbgStore.setError(e?.message || String(e))
+            return input
+          }
+          dbgStore.startRemoteSession(sessionId, handle)
+          ctx.__ck8tExtDebug = { breakpoints: dbgRun.breakpoints, file: dbgRun.file, sessionId }
+          try {
+            return await runner(ctx)
+          } catch (e) {
+            useBlockDebuggerStore.getState().setError(e?.message || String(e))
+            useBlockDebuggerStore.getState().clearRemoteSession()
+            throw e
+          }
+        }
+        return await runThroughDebugger(dbgRun, { blockType: type, ctx })
+      }
+      return await runner(ctx)
+    } finally {
+      if (progressFn) useMcpProgressStore.getState().clearProgress()
+    }
+  }
+  return input
 }
 
 /**
@@ -859,6 +876,35 @@ async function callLlmWithFallback(agent, inputStr, nodeTitle) {
     return { response: proxied, debug: fallbackDebug }
   }
   return { response: directResult, debug: fallbackDebug }
+}
+
+// Adapter: turns callLlmWithFallback into the callAgent({ agent, input }) → { output } interface
+// expected by canonical block runners.
+function _makeCallAgent(nodeTitle) {
+  return async ({ agent, input }) => {
+    const { response: res } = await callLlmWithFallback(agent, String(input ?? ''), nodeTitle)
+    return { output: String(res?.output ?? res) }
+  }
+}
+
+function buildRunCtx({ node, values, input, outputs, inputsByHandle, allNodes, subBlockValues }) {
+  const nodeId = node.id
+  const nodeTitle = node.data?.title || nodeId
+  return {
+    values, input, inputsByHandle, outputs,
+    node, nodeId, nodeTitle, subBlockValues, allNodes,
+    callTool: callMcpTool,
+    callAgent: _makeCallAgent(nodeTitle),
+    callLlm: (agent, inputStr, title) => callLlmWithFallback(agent, inputStr, title ?? nodeTitle),
+    resolveModel: (modelId, provider) => {
+      const model = String(modelId || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
+      return { model, provider: provider || '' }
+    },
+    getSkill: (id) => useWorkspaceStore.getState().skills?.find(s => s.id === id || s.name === id) ?? null,
+    runSkill: (skill, inputStr) => runSkillSource(skill, inputStr),
+    vsApi: globalThis.vsApi ?? null,
+    progress: null,
+  }
 }
 
 async function tryDirectLlmCall(agent, modelEntry) {
@@ -2105,127 +2151,6 @@ async function runRouterV2Node({ node, values, input }) {
   } catch {
     return { branch: routes[0]?.id ?? 'default', value: input }
   }
-}
-
-// ── Chain of Thought / Multi-agent (Sprint 16) ───────────────────────────
-
-async function runChainOfThoughtNode({ node, values, input }) {
-  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
-  const effort = String(values.effort || 'medium')
-  const stepCount = effort === 'low' ? '2–3' : effort === 'high' ? '6–8' : '4–5'
-  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
-  if (!model) throw new GraphValidationError(`No model configured for Chain of Thought "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'chain_of_thought', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
-
-  const systemPrompt =
-    `You are a careful reasoning engine. When given a question you MUST:\n` +
-    `1. Write ${stepCount} numbered reasoning steps (prefix each with "Step N: ...")\n` +
-    `2. State a final conclusion\n3. Rate your confidence 0–1\n\n` +
-    `Respond ONLY with valid JSON:\n{"reasoning_steps":["Step 1: ..."],"conclusion":"...","confidence":0.85}`
-  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question
-  const agent = { id: node.id, model, temperature: 0.2, systemPrompt, userPrompt }
-  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '')
-  let parsed = {}
-  try {
-    const { response: res } = await callLlmWithFallback(agent, inputStr, node.data?.title || node.id)
-    const raw = String(res?.output ?? res).trim()
-    parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
-  } catch { return { reasoning_steps: [], conclusion: inputStr, confidence: 0.5, full_response: parsed } }
-  return {
-    reasoning_steps: Array.isArray(parsed.reasoning_steps) ? parsed.reasoning_steps : [],
-    conclusion: String(parsed.conclusion ?? ''),
-    confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5))),
-    full_response: parsed,
-  }
-}
-
-async function runSlaveAgentNode({ node, values, input }) {
-  const task = String(values.task || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
-  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
-  if (!model) throw new GraphValidationError(`No model configured for Slave Agent "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'slave_agent', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
-  const capabilityLabel = String(values.capabilityLabel || 'specialist')
-  const systemPrompt = String(values.systemPrompt || `You are a specialist agent (${capabilityLabel}). Answer the given task concisely. Respond with JSON: {"answer":"...","cited_nodes":[],"confidence":0.8,"needs_clarification":false}`)
-  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nTask:\n${task}` : task
-  const agent = { id: node.id, model, temperature: 0.3, systemPrompt, userPrompt }
-  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '')
-  try {
-    const { response: res } = await callLlmWithFallback(agent, inputStr, node.data?.title || node.id)
-    const raw = String(res?.output ?? res).trim()
-    const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
-    return { answer: String(parsed.answer ?? raw), cited_nodes: Array.isArray(parsed.cited_nodes) ? parsed.cited_nodes : [], confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.7))), needs_clarification: Boolean(parsed.needs_clarification ?? false) }
-  } catch { return { answer: task, cited_nodes: [], confidence: 0.5, needs_clarification: false } }
-}
-
-function _topoSortSteps(steps) {
-  const layers = []
-  const resolved = new Set()
-  let remaining = [...steps]
-  let guard = steps.length + 2
-  while (remaining.length > 0 && guard-- > 0) {
-    const ready = remaining.filter((s) => s.depends_on.every((d) => resolved.has(d)))
-    if (ready.length === 0) { layers.push(remaining); break }
-    layers.push(ready)
-    ready.forEach((s) => resolved.add(s.id))
-    remaining = remaining.filter((s) => !resolved.has(s.id))
-  }
-  return layers
-}
-
-async function runMasterAgentNode({ node, values, input, allNodes, subBlockValues }) {
-  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')))
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : ''
-  const model = String(values.model || useLlmConfigStore.getState().getDefaultModel() || useLlmConfigStore.getState().models[0]?.id || '')
-  if (!model) throw new GraphValidationError(`No model configured for Master Agent "${node.data?.title || node.id}"`, { nodeId: node.id, blockType: 'master_agent', severity: 'error', hint: 'Open Settings → LLM Provider Configuration.' })
-
-  const slaveNodes = (allNodes || []).filter((n) => n.data?.blockType === 'slave_agent')
-  const slaveCapabilities = slaveNodes.map((n) => ({ nodeId: n.id, capability: String((subBlockValues[n.id] ?? {}).capabilityLabel || n.data?.title || n.id) }))
-  const capabilityList = slaveCapabilities.length > 0
-    ? slaveCapabilities.map((sc, i) => `  ${i + 1}. ${sc.capability} (id: ${sc.nodeId})`).join('\n')
-    : '  (no slaves — master will answer directly)'
-  const planSysPrompt = `You are a master orchestrator. Break the question into sub-tasks.\nAvailable slaves:\n${capabilityList}\n\nRespond ONLY with valid JSON:\n{"steps":[{"id":"step_1","sub_question":"...","capability":"<label>","depends_on":[]}]}`
-  const planUserPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question
-
-  let cotPlan = [], rawPlanJson = null
-  try {
-    const { response: planRes } = await callLlmWithFallback({ id: node.id + '_plan', model, temperature: 0.3, systemPrompt: planSysPrompt, userPrompt: planUserPrompt }, question, node.data?.title || node.id)
-    const planRaw = String(planRes?.output ?? planRes).trim()
-    rawPlanJson = JSON.parse(planRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
-    cotPlan = rawPlanJson.steps ?? []
-  } catch {
-    cotPlan = slaveCapabilities.map((sc, i) => ({ id: `step_${i + 1}`, sub_question: question, capability: sc.capability, depends_on: [] }))
-    rawPlanJson = { steps: cotPlan, fallback: true }
-  }
-
-  const capToNodeId = Object.fromEntries(slaveCapabilities.map((sc) => [sc.capability, sc.nodeId]))
-  const slaveOutputs = {}
-  let sharedCtx = contextStr
-  for (const layer of _topoSortSteps(cotPlan)) {
-    const results = await Promise.allSettled(layer.map(async (step) => {
-      const slaveNodeId = capToNodeId[step.capability]
-      const slaveNode = slaveNodeId ? (allNodes || []).find((n) => n.id === slaveNodeId) : null
-      if (!slaveNode) return { stepId: step.id, result: { answer: `No slave for: ${step.capability}`, cited_nodes: [], confidence: 0.3, needs_clarification: false } }
-      const sv = subBlockValues[slaveNode.id] ?? {}
-      const result = await runSlaveAgentNode({ node: slaveNode, values: { ...sv, task: step.sub_question, context: sharedCtx }, input: step.sub_question })
-      return { stepId: step.id, result }
-    }))
-    for (const s of results) {
-      if (s.status === 'fulfilled') { slaveOutputs[s.value.stepId] = s.value.result; sharedCtx += `\n\n[${s.value.stepId}] ${s.value.result?.answer ?? ''}` }
-    }
-  }
-
-  const evidenceParts = Object.entries(slaveOutputs).map(([id, r]) => `[${id}] ${r?.answer ?? ''}`).join('\n\n')
-  const synthSys = String(values.synthesisPrompt || `You are a synthesis agent. Produce a concise final answer. Respond with JSON: {"final_answer":"...","confidence":0.9}`)
-  const synthUserPrompt = `Question:\n${question}\n\nEvidence:\n${evidenceParts}`
-  let finalAnswer = evidenceParts || question, confidence = 0.7
-  try {
-    const { response: synthRes } = await callLlmWithFallback({ id: node.id + '_synthesis', model, temperature: 0.2, systemPrompt: synthSys, userPrompt: synthUserPrompt }, synthUserPrompt, node.data?.title || node.id)
-    const synthJson = JSON.parse(String(synthRes?.output ?? synthRes).trim().replace(/^```json\s*/i, '').replace(/```\s*$/, ''))
-    finalAnswer = String(synthJson.final_answer ?? finalAnswer)
-    confidence = Math.min(1, Math.max(0, Number(synthJson.confidence ?? 0.7)))
-  } catch { /* use concatenated evidence */ }
-
-  return { final_answer: finalAnswer, slave_outputs: slaveOutputs, cot_plan: rawPlanJson, confidence }
 }
 
 // ── NS9 blocks (Sprint 27) ───────────────────────────────────────────────

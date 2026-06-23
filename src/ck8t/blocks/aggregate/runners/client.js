@@ -1,19 +1,39 @@
-export function run({ values, input }) {
-  const arr = Array.isArray(input) ? input : []
-  const op = String(values.operation || 'count')
-  const key = String(values.key || values.field || '')
-  const vals = key ? arr.map(i => (i != null ? i[key] : i)).filter(v => v != null) : arr.filter(v => v != null)
-  switch (op) {
-    case 'count': return { result: arr.length }
-    case 'sum': return { result: vals.reduce((s, v) => s + Number(v), 0) }
-    case 'avg': return { result: vals.length ? vals.reduce((s, v) => s + Number(v), 0) / vals.length : 0 }
-    case 'min': return { result: vals.length ? Math.min(...vals.map(Number)) : null }
-    case 'max': return { result: vals.length ? Math.max(...vals.map(Number)) : null }
-    case 'flatten': return { result: arr.flat(Infinity) }
-    case 'unique': return { result: [...new Set(vals)] }
-    case 'join': return { result: vals.join(String(values.separator || ',')) }
-    case 'first': return { result: arr[0] ?? null }
-    case 'last': return { result: arr[arr.length - 1] ?? null }
-    default: return { result: arr.length }
-  }
-}
+export default [
+  {
+    type: 'aggregate',
+    run({ values, input }) {
+      const operation = String(values.operation || 'count')
+      const field = String(values.field || values.key || '')
+      let arr = Array.isArray(input) ? input : []
+      if (!Array.isArray(input) && typeof input === 'string') {
+        try { const p = JSON.parse(input); if (Array.isArray(p)) arr = p } catch { arr = [] }
+      }
+      const extract = (item) => field && item && typeof item === 'object' ? item[field] : item
+      const nums = arr.map(extract).map(Number).filter(n => !isNaN(n))
+      switch (operation) {
+        case 'sum': return { result: nums.reduce((a, b) => a + b, 0), count: arr.length }
+        case 'count': return { result: arr.length, count: arr.length }
+        case 'avg': return { result: nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : 0, count: arr.length }
+        case 'min': return { result: nums.length > 0 ? Math.min(...nums) : null, count: arr.length }
+        case 'max': return { result: nums.length > 0 ? Math.max(...nums) : null, count: arr.length }
+        case 'concat': return { result: arr.map(extract), count: arr.length }
+        case 'group': {
+          const groups = {}
+          for (const item of arr) {
+            const key = String(extract(item) ?? 'undefined')
+            if (!groups[key]) groups[key] = []
+            groups[key].push(item)
+          }
+          return { result: groups, count: arr.length }
+        }
+        case 'custom': {
+          try {
+            const fn = new Function('input', String(values.customFn || 'return input'))
+            return { result: fn(arr), count: arr.length }
+          } catch { return { result: null, count: arr.length } }
+        }
+        default: return { result: arr.length, count: arr.length }
+      }
+    },
+  },
+]

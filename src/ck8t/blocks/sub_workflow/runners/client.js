@@ -1,0 +1,1 @@
+export default [{ type: 'sub_workflow', run({ values }) { const wfId = values?.workflowId; if (!wfId) throw new Error('Sub-Workflow: no workflow selected.'); throw new Error('Sub-Workflow block requires the convengine backend.') } }]

@@ -11,6 +11,22 @@ import { getRunInputRenderer } from '../input-registry'
 import '../input-kinds'  // register core input kinds (side-effect)
 import ErrorDetailView from './ErrorDetailView'
 
+function CopyBtn({ text }) {
+  const [done, setDone] = useState(false)
+  function copy(e) {
+    e.stopPropagation()
+    navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1200) })
+  }
+  return (
+    <button className={`bs-copy-btn${done ? ' is-done' : ''}`} title="Copy" onClick={copy} type="button">
+      {done
+        ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      }
+    </button>
+  )
+}
+
 const RunPanel = {
   id: 'run',
   label: 'Run',
@@ -86,6 +102,7 @@ function RunResult({ result }) {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         <span className="bs-run-result-title">Output</span>
         {result.trace && <span className="bs-run-result-badge">{result.trace.length} node{result.trace.length !== 1 ? 's' : ''}</span>}
+        <CopyBtn text={safeJson(output)} />
       </div>
 
       {isObj ? (
@@ -117,6 +134,7 @@ function ResultDisclosure({ label, value, defaultOpen = false }) {
         <span className="bs-result-disclosure-key">{label}</span>
         {!open && <span className="bs-result-disclosure-preview">{preview}</span>}
         <TypeBadge value={value} />
+        <CopyBtn text={typeof value === 'string' ? value : safeJson(value)} />
       </button>
       {open && (
         <div className="bs-result-disclosure-body">
@@ -146,7 +164,7 @@ function shortPreview(v) {
   const s = typeof v === 'string' ? v : safeJson(v)
   return s.length > 80 ? s.slice(0, 80) + '…' : s
 }
-function safeJson(v) { try { return JSON.stringify(v) } catch { return String(v) } }
+function safeJson(v) { try { return JSON.stringify(v, null, 2) } catch { return String(v) } }
 
 /**
  * Renders the appropriate input widget based on the node's `kind`.

@@ -9,6 +9,7 @@
  *  2. ck8t.css — bs-* prefixed component styles
  */
 import '@salilvnair/dui/monaco-setup';
+import '@salilvnair/dui/style.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import '../src/index.css';

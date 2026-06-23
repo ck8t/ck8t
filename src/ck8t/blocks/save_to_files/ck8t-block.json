@@ -1,8 +1,8 @@
 {
   "id": "save_to_files",
   "name": "Save To Files",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
   "blocks": [{ "type": "save_to_files", "ui": "ui/save_to_files.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

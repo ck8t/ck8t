@@ -1,8 +1,8 @@
 {
   "id": "mapper",
   "name": "Mapper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
   "blocks": [{ "type": "mapper", "ui": "ui/mapper.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

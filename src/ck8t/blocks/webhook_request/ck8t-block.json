@@ -1,7 +1,8 @@
 {
   "id": "webhook_request",
   "name": "Webhook Request",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
-  "blocks": [{ "type": "webhook_request", "ui": "ui/webhook_request.js" }]
+  "blocks": [{ "type": "webhook_request", "ui": "ui/webhook_request.js" }],
+  "runners": { "client": "runners/client.js" }
 }

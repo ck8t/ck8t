@@ -17,6 +17,7 @@
  *   /api/v1/ck8t/scheduler/start→ scheduler.ts
  *   /api/v1/mcp/servers                   → mcp.ts (SQLite-backed)
  *   /hook/:workflowId                     → scheduler.ts (webhook trigger)
+ *   ws://.../ck8t/debug-ws                → debug-ws.ts (block debugger pause/resume relay)
  */
 import express from 'express';
 import cors from 'cors';
@@ -34,6 +35,7 @@ import { blockManagerRouter } from './routes/block-manager';
 import { auditRouter } from './routes/audit';
 import { devtoolsRouter } from './routes/devtools';
 import { aiProvidersRouter } from './routes/ai-providers';
+import { attachDebugWs } from './routes/debug-ws';
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -91,6 +93,8 @@ export async function startBridgeServer(): Promise<number> {
     _server.requestTimeout = 0;
     _server.setTimeout(0);
   });
+
+  attachDebugWs(_server!);
 
   console.log(`[ck8t] Bridge server → http://127.0.0.1:${port}`);
   return port;

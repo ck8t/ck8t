@@ -1,7 +1,8 @@
 {
   "id": "table",
   "name": "Table",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
-  "blocks": [{ "type": "table", "ui": "ui/table.js" }]
+  "blocks": [{ "type": "table", "ui": "ui/table.js" }],
+  "runners": { "client": "runners/client.js" }
 }

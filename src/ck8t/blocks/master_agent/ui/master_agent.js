@@ -17,7 +17,7 @@
  *   cot_plan       — json    — the step-by-step plan the master generated
  *   confidence     — number  — 0–1 aggregate confidence from synthesis
  */
-import { AgentIcon } from '../../../components/icons'
+import { MasterAgentIcon } from '../../../components/icons'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks } from '../../utils'
 import { defineCk8tBlock } from '../../ck8t-block-base.js'
 
@@ -38,7 +38,7 @@ export const MasterAgentBlock = defineCk8tBlock({
   `,
   category: 'blocks',
   bgColor: '#D97706',
-  icon: AgentIcon,
+  icon: MasterAgentIcon,
   tags: ['llm', 'orchestration', 'multi-agent', 'chain-of-thought', 'master-slave'],
 
   subBlocks: [

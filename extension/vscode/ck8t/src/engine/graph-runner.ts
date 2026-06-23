@@ -18,6 +18,18 @@ import type { AgentRequest, AgentResponse, Workflow, TraceEntry, RunResult } fro
 import { runNs9QueryBlock, runNs9RlhfBlock, runNs9IngestBlock } from './ns9-block';
 import { customBlockRunners, customBlockMeta, emitBlockProgress } from '../services/block-loader';
 
+// ── Orchestration block runners ───────────────────────────────────────────
+// Loaded from the canonical block runner files via require().
+// esbuild resolves and bundles these JS files at build time (no tsconfig constraint applies).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+type BlockRunnerFn = (o: Record<string, unknown>) => Promise<Record<string, unknown>>;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const _runCot: BlockRunnerFn    = (require('../../../../../src/ck8t/blocks/chain_of_thought/runners/extension.js').default as Array<{ run: BlockRunnerFn }>)?.[0]?.run;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const _runSlave: BlockRunnerFn  = (require('../../../../../src/ck8t/blocks/slave_agent/runners/extension.js').default as Array<{ run: BlockRunnerFn }>)?.[0]?.run;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const _runMaster: BlockRunnerFn = (require('../../../../../src/ck8t/blocks/master_agent/runners/extension.js').default as Array<{ run: BlockRunnerFn }>)?.[0]?.run;
+
 /* ── Dependency injection types ── */
 
 export type CallAgentFn = (req: AgentRequest) => Promise<AgentResponse>;
@@ -513,174 +525,6 @@ async function runAiClassifierNode(opts: {
 
 // ── Chain of Thought / Multi-agent blocks (Sprint 16) ─────────────────────
 
-async function runChainOfThoughtNode(opts: {
-  node: { id: string; data?: Record<string, unknown> };
-  values: Record<string, unknown>;
-  input: unknown;
-  callAgent: CallAgentFn;
-}): Promise<{ reasoning_steps: string[]; conclusion: string; confidence: number; full_response: unknown }> {
-  const { node, values, input, callAgent } = opts;
-  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
-  const effort = String(values.effort || 'medium');
-  const stepCount = effort === 'low' ? '2–3' : effort === 'high' ? '6–8' : '4–5';
-  const rawModel = values.model ? String(values.model) : null;
-  if (!rawModel) throw new Error(`No model configured for Chain of Thought block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
-
-  const systemPrompt =
-    `You are a careful reasoning engine. When given a question you MUST:\n` +
-    `1. Write ${stepCount} numbered reasoning steps (prefix each with "Step N: ...")\n` +
-    `2. State a final conclusion\n3. Rate your confidence 0–1\n\n` +
-    `Respond ONLY with valid JSON:\n{"reasoning_steps":["Step 1: ..."],"conclusion":"...","confidence":0.85}`;
-
-  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question;
-  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
-
-  let parsed: Record<string, unknown> = {};
-  try {
-    const res = await callAgent({ agent: { id: node.id, model: rawModel, temperature: 0.2, systemPrompt, userPrompt }, input: inputStr });
-    const raw = res.output.trim();
-    parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-  } catch {
-    return { reasoning_steps: [], conclusion: inputStr, confidence: 0.5, full_response: parsed };
-  }
-  return {
-    reasoning_steps: Array.isArray(parsed.reasoning_steps) ? (parsed.reasoning_steps as string[]) : [],
-    conclusion: String(parsed.conclusion ?? ''),
-    confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.5))),
-    full_response: parsed,
-  };
-}
-
-async function runSlaveAgentNode(opts: {
-  node: { id: string; data?: Record<string, unknown> };
-  values: Record<string, unknown>;
-  input: unknown;
-  callAgent: CallAgentFn;
-}): Promise<{ answer: string; cited_nodes: string[]; confidence: number; needs_clarification: boolean }> {
-  const { node, values, input, callAgent } = opts;
-  const task = String(values.task || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
-  const rawModel = values.model ? String(values.model) : null;
-  if (!rawModel) throw new Error(`No model configured for Slave Agent block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
-
-  const capabilityLabel = String(values.capabilityLabel || 'specialist');
-  const systemPrompt = String(values.systemPrompt ||
-    `You are a specialist agent (${capabilityLabel}). Answer the given task concisely. ` +
-    `Respond with JSON: {"answer":"...","cited_nodes":[],"confidence":0.8,"needs_clarification":false}`
-  );
-  const userPrompt = contextStr ? `Context:\n${contextStr}\n\nTask:\n${task}` : task;
-  const inputStr = typeof input === 'string' ? input : JSON.stringify(input ?? '');
-
-  try {
-    const res = await callAgent({ agent: { id: node.id, model: rawModel, temperature: 0.3, systemPrompt, userPrompt }, input: inputStr });
-    const raw = res.output.trim();
-    const parsed = JSON.parse(raw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-    return {
-      answer: String(parsed.answer ?? raw),
-      cited_nodes: Array.isArray(parsed.cited_nodes) ? parsed.cited_nodes : [],
-      confidence: Math.min(1, Math.max(0, Number(parsed.confidence ?? 0.7))),
-      needs_clarification: Boolean(parsed.needs_clarification ?? false),
-    };
-  } catch {
-    return { answer: task, cited_nodes: [], confidence: 0.5, needs_clarification: false };
-  }
-}
-
-interface MasterCotStep { id: string; sub_question: string; capability: string; depends_on: string[] }
-
-function topoSortSteps(steps: MasterCotStep[]): MasterCotStep[][] {
-  const layers: MasterCotStep[][] = [];
-  const resolved = new Set<string>();
-  let remaining = [...steps];
-  let guard = steps.length + 2;
-  while (remaining.length > 0 && guard-- > 0) {
-    const ready = remaining.filter((s) => s.depends_on.every((d) => resolved.has(d)));
-    if (ready.length === 0) { layers.push(remaining); break; }
-    layers.push(ready);
-    ready.forEach((s) => resolved.add(s.id));
-    remaining = remaining.filter((s) => !resolved.has(s.id));
-  }
-  return layers;
-}
-
-async function runMasterAgentNode(opts: {
-  node: { id: string; data?: Record<string, unknown> };
-  values: Record<string, unknown>;
-  input: unknown;
-  allNodes: { id: string; data?: Record<string, unknown> }[];
-  subBlockValues: Record<string, Record<string, unknown>>;
-  callAgent: CallAgentFn;
-}): Promise<{ final_answer: string; slave_outputs: Record<string, unknown>; cot_plan: unknown; confidence: number }> {
-  const { node, values, input, allNodes, subBlockValues, callAgent } = opts;
-  const question = String(values.question || (typeof input === 'string' ? input : JSON.stringify(input ?? '')));
-  const contextStr = values.context ? (typeof values.context === 'string' ? values.context : JSON.stringify(values.context)) : '';
-  const rawModel = values.model ? String(values.model) : null;
-  if (!rawModel) throw new Error(`No model configured for Master Agent block "${node.data?.title || node.id}". Open Settings → LLM Provider Configuration.`);
-
-  const slaveNodes = allNodes.filter((n) => n.data?.blockType === 'slave_agent');
-  const slaveCapabilities = slaveNodes.map((n) => ({
-    nodeId: n.id,
-    capability: String((subBlockValues[n.id] ?? {}).capabilityLabel || n.data?.title || n.id),
-  }));
-
-  const capabilityList = slaveCapabilities.length > 0
-    ? slaveCapabilities.map((sc, i) => `  ${i + 1}. ${sc.capability} (id: ${sc.nodeId})`).join('\n')
-    : '  (no slaves registered — the master will answer directly)';
-
-  const planSystemPrompt =
-    `You are a master orchestrator. Break the question into sub-tasks.\nAvailable slaves:\n${capabilityList}\n\n` +
-    `Respond ONLY with valid JSON:\n{"steps":[{"id":"step_1","sub_question":"...","capability":"<label>","depends_on":[]}]}`;
-  const planUserPrompt = contextStr ? `Context:\n${contextStr}\n\nQuestion:\n${question}` : question;
-
-  let cotPlan: MasterCotStep[] = [];
-  let rawPlanJson: unknown = null;
-  try {
-    const planRes = await callAgent({ agent: { id: node.id + '_plan', model: rawModel, temperature: 0.3, systemPrompt: planSystemPrompt, userPrompt: planUserPrompt }, input: question });
-    const planRaw = planRes.output.trim();
-    rawPlanJson = JSON.parse(planRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-    cotPlan = (rawPlanJson as { steps: MasterCotStep[] }).steps ?? [];
-  } catch {
-    cotPlan = slaveCapabilities.map((sc, i) => ({ id: `step_${i + 1}`, sub_question: question, capability: sc.capability, depends_on: [] }));
-    rawPlanJson = { steps: cotPlan, fallback: true };
-  }
-
-  const capabilityToNodeId = Object.fromEntries(slaveCapabilities.map((sc) => [sc.capability, sc.nodeId]));
-  const slaveOutputs: Record<string, unknown> = {};
-  let sharedContext = contextStr;
-
-  for (const layer of topoSortSteps(cotPlan)) {
-    const results = await Promise.allSettled(layer.map(async (step) => {
-      const slaveNodeId = capabilityToNodeId[step.capability];
-      const slaveNode = slaveNodeId ? allNodes.find((n) => n.id === slaveNodeId) : null;
-      if (!slaveNode) return { stepId: step.id, result: { answer: `No slave for capability: ${step.capability}`, cited_nodes: [], confidence: 0.3, needs_clarification: false } };
-      const slaveValues = subBlockValues[slaveNode.id] ?? {};
-      const result = await runSlaveAgentNode({ node: slaveNode, values: { ...slaveValues, task: step.sub_question, context: sharedContext }, input: step.sub_question, callAgent });
-      return { stepId: step.id, result };
-    }));
-    for (const settled of results) {
-      if (settled.status === 'fulfilled') {
-        slaveOutputs[settled.value.stepId] = settled.value.result;
-        sharedContext += `\n\n[${settled.value.stepId}] ${(settled.value.result as { answer?: string }).answer ?? ''}`;
-      }
-    }
-  }
-
-  const evidenceParts = Object.entries(slaveOutputs).map(([id, r]) => `[${id}] ${(r as { answer?: string }).answer ?? ''}`).join('\n\n');
-  const synthSystem = String(values.synthesisPrompt || `You are a synthesis agent. Produce a concise final answer. Respond with JSON: {"final_answer":"...","confidence":0.9}`);
-  const synthUserPrompt = `Question:\n${question}\n\nEvidence:\n${evidenceParts}`;
-  let finalAnswer = evidenceParts || question;
-  let confidence = 0.7;
-  try {
-    const synthRes = await callAgent({ agent: { id: node.id + '_synthesis', model: rawModel, temperature: 0.2, systemPrompt: synthSystem, userPrompt: synthUserPrompt }, input: synthUserPrompt });
-    const synthJson = JSON.parse(synthRes.output.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
-    finalAnswer = String(synthJson.final_answer ?? finalAnswer);
-    confidence = Math.min(1, Math.max(0, Number(synthJson.confidence ?? 0.7)));
-  } catch { /* use concatenated evidence */ }
-
-  return { final_answer: finalAnswer, slave_outputs: slaveOutputs, cot_plan: rawPlanJson, confidence };
-}
-
 // ── Card port defaults (mirrors io-registry.js cardPortOverrides) ──────────
 // Used to determine disabled-node behaviour: only nodes with BOTH inputs and
 // outputs do a pass-through; others are skipped (produce null).
@@ -1118,15 +962,15 @@ export async function executeGraph({
             }
             // ── Multi-agent orchestration (Sprint 16) ─────────────────── //
             case 'chain_of_thought': {
-              output = await runChainOfThoughtNode({ node: n, values, input, callAgent });
+              output = await _runCot({ node: n, values, input, callAgent });
               break;
             }
             case 'slave_agent': {
-              output = await runSlaveAgentNode({ node: n, values, input, callAgent });
+              output = await _runSlave({ node: n, values, input, callAgent });
               break;
             }
             case 'master_agent': {
-              output = await runMasterAgentNode({ node: n, values, input, allNodes, subBlockValues, callAgent });
+              output = await _runMaster({ node: n, values, input, allNodes, subBlockValues, callAgent });
               break;
             }
             // ── NS9 blocks (Sprint 27) ────────────────────────────────── //

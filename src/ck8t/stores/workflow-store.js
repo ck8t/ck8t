@@ -42,6 +42,7 @@ function _pushSnapThrottled(s) {
 }
 
 const initialState = {
+  canvasDirty: false,
   nodes: [],
   edges: [],
   selectedNodeId: null,
@@ -117,6 +118,8 @@ export const useWorkflowStore = create()(
     (set, get) => ({
       ...initialState,
 
+      setCanvasDirty(dirty) { set({ canvasDirty: dirty }) },
+
       addExtraProblem(problem) {
         set((s) => ({ extraProblems: [...s.extraProblems, problem] }))
       },
@@ -170,6 +173,12 @@ export const useWorkflowStore = create()(
           subBlockValues: subBlockValues || {},
           selectedNodeId: null,
           selectedNodeIds: [],
+          lastOutputs: {},
+          lastNodeTrace: {},
+          completedNodeIds: [],
+          errorNodeIds: new Set(),
+          activeEdgeIds: [],
+          activeNodeId: null,
         })
       },
 
@@ -179,7 +188,16 @@ export const useWorkflowStore = create()(
       },
       onEdgesChange(changes) {
         _pushSnapThrottled(get())
-        set((s) => ({ edges: applyEdgeChanges(changes, s.edges) }))
+        set((s) => {
+          const removedTargets = changes
+            .filter((c) => c.type === 'remove')
+            .map((c) => s.edges.find((e) => e.id === c.id)?.target)
+            .filter(Boolean)
+          const newLastOutputs = removedTargets.length
+            ? removedTargets.reduce((acc, t) => ({ ...acc, [t]: undefined }), { ...s.lastOutputs })
+            : s.lastOutputs
+          return { edges: applyEdgeChanges(changes, s.edges), lastOutputs: newLastOutputs }
+        })
       },
       onConnect(params) {
         _pushSnap(get())
@@ -201,7 +219,21 @@ export const useWorkflowStore = create()(
             category: blockConfig?.category,
           },
         }
-        set((s) => ({ nodes: [...s.nodes, node] }))
+        // Seed subBlockValues with defaultValue from each sub-block definition.
+        const cfg = getBlock(blockType)
+        const initValues = {}
+        if (cfg?.subBlocks) {
+          for (const sb of cfg.subBlocks) {
+            const dv = sb.defaultValue
+            if (dv !== undefined && dv !== null && dv !== '') {
+              initValues[sb.id] = typeof dv === 'object' && !Array.isArray(dv) ? { ...dv } : dv
+            }
+          }
+        }
+        set((s) => ({
+          nodes: [...s.nodes, node],
+          subBlockValues: { ...s.subBlockValues, [id]: initValues },
+        }))
         return node
       },
 
@@ -310,13 +342,19 @@ export const useWorkflowStore = create()(
       removeEdge(id) {
         if (!id) return  // guard: falsy id would wipe all id-less edges
         _pushSnap(get())
-        set((s) => ({ edges: s.edges.filter((e) => e.id !== id) }))
+        set((s) => {
+          const removed = s.edges.find((e) => e.id === id)
+          const newLastOutputs = removed
+            ? { ...s.lastOutputs, [removed.target]: undefined }
+            : s.lastOutputs
+          return { edges: s.edges.filter((e) => e.id !== id), lastOutputs: newLastOutputs }
+        })
       },
 
       /** Remove all edges from the entire canvas. */
       disconnectAll() {
         _pushSnap(get())
-        set({ edges: [] })
+        set({ edges: [], lastOutputs: {} })
       },
 
       selectNode(id) {

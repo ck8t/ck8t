@@ -52,7 +52,7 @@ export const AUDIT_EVENT_DEFS = [
   { id: 'settings.provider.change', module: 'Settings', button: 'Provider',        action: 'update', description: 'Change active LLM provider',        color: '#94a3b8', defaultEnabled: true  },
 
   // ── DB ───────────────────────────────────────────────────────────────────────
-  { id: 'db.save', module: 'DB', button: 'Auto-save', action: 'update', description: 'Canvas snapshot persisted to SQLite', color: '#34d399', defaultEnabled: true },
+  { id: 'db.save', module: 'DB', button: 'Auto-save', action: 'update', description: 'Canvas snapshot persisted to SQLite', color: '#34d399', defaultEnabled: false },
 ]
 
 // ─── Module display order ─────────────────────────────────────────────────────
@@ -61,7 +61,10 @@ export const MODULE_ORDER = ['Workflow', 'Canvas', 'Community Blocks', 'MCP', 'S
 
 // ─── localStorage config ─────────────────────────────────────────────────────
 
-const CONFIG_KEY = 'ck8t_audit_config'
+const CONFIG_KEY      = 'ck8t_audit_config'
+const RATE_CONFIG_KEY = 'ck8t_audit_rate'
+
+const RATE_DEFAULTS = { maxCount: 5, windowMs: 60_000 }
 
 export function getAuditConfig() {
   try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') } catch { return {} }
@@ -83,6 +86,14 @@ export function resetAuditConfig() {
   try { localStorage.removeItem(CONFIG_KEY) } catch {}
 }
 
+export function getRateConfig() {
+  try { return { ...RATE_DEFAULTS, ...JSON.parse(localStorage.getItem(RATE_CONFIG_KEY) || '{}') } } catch { return { ...RATE_DEFAULTS } }
+}
+
+export function setRateConfig(patch) {
+  try { localStorage.setItem(RATE_CONFIG_KEY, JSON.stringify({ ...getRateConfig(), ...patch })) } catch {}
+}
+
 // ─── In-memory ring buffer ────────────────────────────────────────────────────
 
 const MAX_LOG = 500
@@ -95,6 +106,13 @@ export function logUiEvent(id, metadata) {
   if (!isAuditEventEnabled(id)) return
   const def = AUDIT_EVENT_DEFS.find(d => d.id === id)
   if (!def) return
+
+  // Rate-limit: same event id max N times per time window
+  const { maxCount, windowMs } = getRateConfig()
+  const now = Date.now()
+  const recentSame = _log.filter(e => e.eventId === id && now - e.timestamp <= windowMs)
+  if (recentSame.length >= maxCount) return
+
   const entry = {
     id:        crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
     eventId:   id,
@@ -104,7 +122,7 @@ export function logUiEvent(id, metadata) {
     color:     def.color,
     description: def.description,
     metadata:  metadata ?? null,
-    timestamp: Date.now(),
+    timestamp: now,
   }
   _log = [entry, ..._log].slice(0, MAX_LOG)
   _notify()

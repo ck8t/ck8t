@@ -1,8 +1,8 @@
 {
   "id": "ns9_ingest",
   "name": "NS9 Ingest",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
   "blocks": [{ "type": "ns9_ingest", "ui": "ui/ns9_ingest.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

@@ -42,18 +42,15 @@ export default function ImportWorkflowModal({
     setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   }
 
-  const canSubmit = name.trim().length > 0
+  const canSubmit = name.trim().length > 0 && !!folderId
 
   function submit(e) {
     e.preventDefault()
     if (!canSubmit) return
-    onImport?.(name.trim(), teamIds, folderId || null)
+    onImport?.(name.trim(), teamIds, folderId)
   }
 
-  const folderOptions = [
-    { id: '', label: '— No folder (root) —' },
-    ...folders.map((f) => ({ id: f.id, label: f.name })),
-  ]
+  const folderOptions = folders.map((f) => ({ id: f.id, label: f.name }))
 
   return createPortal(
     <div className="bs-modal-overlay" onClick={onCancel}>
@@ -87,16 +84,21 @@ export default function ImportWorkflowModal({
             />
           </div>
 
-          {folders.length > 0 && (
-            <div className="bs-field">
-              <label className="bs-label">Folder</label>
+          <div className="bs-field">
+            <label className="bs-label">Folder</label>
+            {folders.length === 0 ? (
+              <div className="bs-hint bs-hint-warn">
+                No folders yet — create one in the sidebar first.
+              </div>
+            ) : (
               <StyledSelect
                 value={folderId || ''}
                 options={folderOptions}
                 onChange={(id) => setFolderId(id || null)}
+                placeholder="Select a folder…"
               />
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="bs-field">
             <label className="bs-label">Teams <span className="bs-label-hint">(optional)</span></label>

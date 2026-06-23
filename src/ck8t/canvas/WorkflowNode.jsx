@@ -24,7 +24,6 @@ import { useWorkspaceStore } from '../stores/workspace-store'
 import { useMcpStore } from '../mcp/mcp-store'
 import { useMcpProgressStore } from '../stores/mcp-progress-store'
 import { useLlmConfigStore } from '../stores/llm-config-store'
-import { useBlockDebugStore } from '../stores/block-debug-store'
 import { useBlockDebuggerStore } from '../debug/block-debugger-store'
 import { getBlock } from '../blocks/registry'
 import { getTypeColor, getCardPorts, getAllPortTypes, isTypeCompatible } from '../panel/io-registry'
@@ -54,6 +53,7 @@ import {
 const INLINE_INTERACTIVE = new Set([
   'switch', 'dropdown', 'combobox',
   'short-input', 'long-input', 'text', 'eval-input',
+  'code', 'code-editor',
   'slider',
   'mcp-server-selector', 'mcp-tool-selector', 'mcp-dynamic-args',
 ])
@@ -306,8 +306,6 @@ function WorkflowNode({ id, data, selected }) {
   const isDisabled = !!data.disabled
   // Disabled nodes are never flagged for missing config — they're bypassed at runtime
   const isInvalidInput = !isDisabled && (invalidInputNodeIds?.has?.(id) ?? false)
-  const isDebugMode = useBlockDebugStore((s) => s.debugEnabled.has(id))
-  const toggleDebug = useBlockDebugStore((s) => s.toggleDebug)
   const openDebugger = useBlockDebuggerStore((s) => s.openDebugger)
   const isUnconnected = hasNoIncoming
   const cfg = getBlock(data.blockType)
@@ -599,17 +597,6 @@ function WorkflowNode({ id, data, selected }) {
           </>
         )}
 
-        {/* ── Debug mode badge ── */}
-        {isDebugMode && (
-          <div className="bs-node-debug-badge" title="Debug mode enabled — breakpoints captured on next run">
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="5" y="5" width="6" height="8" rx="3" />
-              <path d="M8 1v4" /><path d="M3 7h2" /><path d="M11 7h2" /><path d="M3 11h2" /><path d="M11 11h2" />
-            </svg>
-            DBG
-          </div>
-        )}
-
         {/* ── Disabled overlay (ComfyUI-style full-card, toggled via ⌘B) ── */}
         {isDisabled && (
           <div className="bs-node-disabled-overlay">
@@ -865,7 +852,7 @@ function WorkflowNode({ id, data, selected }) {
           <div className="bs-port-strip bs-port-strip-out bs-port-strip-branch">
             {outputHandles.map((h) => (
               <div key={h} className="bs-port-row bs-port-row-out">
-                <span className={`bs-port-branch-label bs-port-branch-${safeHandleColor(h)}`}>{h}</span>
+                <span className={`bs-port-branch-label bs-port-branch-${safeHandleColor(h)}`}>{formatHandleLabel(h)}</span>
                 <Handle
                   type="source"
                   position={Position.Right}
@@ -894,8 +881,7 @@ function WorkflowNode({ id, data, selected }) {
             { id: 'rename', label: 'Rename', icon: CtxRenameIcon, iconColor: '#fbbf24', shortcut: 'F2', onSelect: () => setEditing(true) },
             { id: 'dup', label: 'Duplicate', icon: CtxDuplicateIcon, iconColor: '#22d3ee', shortcut: '⌘D', onSelect: () => duplicateNode(id) },
             { id: 'inspect', label: 'Inspect', icon: CtxInspectIcon, iconColor: '#22d3ee', shortcut: '⌘I', disabled: !traceEntry, onSelect: () => setInspectOpen(true) },
-            { id: 'debugger', label: 'Debug Block', icon: CtxDebugIcon, iconColor: '#f59e0b', onSelect: () => openDebugger(id, data?.blockType, data?.title) },
-            { id: 'debug', label: isDebugMode ? 'Disable Debug Mode' : 'Enable Debug Mode', icon: CtxDebugIcon, iconColor: isDebugMode ? '#f97316' : '#a3e635', onSelect: () => toggleDebug(id) },
+            { id: 'debugger', label: 'Debug', icon: CtxDebugIcon, iconColor: '#f59e0b', onSelect: () => openDebugger(id, data?.blockType, data?.title, Icon, cfg?.bgColor || data?.bgColor) },
             { id: 'resize', label: resizeMode ? 'Lock Size' : 'Resize', icon: CtxResizeIcon, iconColor: '#a78bfa', onSelect: () => setResizeMode((v) => !v) },
             { id: 'fit', label: 'Fit to Content', icon: CtxResizeIcon, iconColor: '#a78bfa', disabled: !nodeH, onSelect: () => { setNodeH(undefined); fitNodeStore(id) } },
             { separator: true },
@@ -1090,10 +1076,14 @@ function renderInlineEditor(sb, value, onChange, ctx = {}) {
     // Text inputs — rendered as "ghost" fields that look like text until focus.
     // For `eval-input` / `long-input` we still use a single-line input on the
     // card; the Inspector holds the full multi-line textarea.
+    // `code` / `code-editor` show a compact single-line preview on the card;
+    // the full Monaco editor lives in the Inspector.
     case 'short-input':
     case 'long-input':
     case 'text':
     case 'eval-input':
+    case 'code':
+    case 'code-editor':
       return (
         <InlineInput
           type={sb.password ? 'password' : 'text'}
@@ -1443,6 +1433,17 @@ function safeHandleColor(h) {
   return 'case'
 }
 
+function formatHandleLabel(h) {
+  const s = String(h)
+  // branch_1 → "if 1", branch_N → "else if N" for N > 1
+  const branchMatch = s.match(/^branch_(\d+)$/)
+  if (branchMatch) return branchMatch[1] === '1' ? 'if' : `elif ${branchMatch[1]}`
+  // case_1 → "1", case_2 → "2"
+  const caseMatch = s.match(/^case_(\d+)$/)
+  if (caseMatch) return caseMatch[1]
+  return s
+}
+
 /**
  * ComfyUI-style per-field pin color. Each subBlock row shows a tiny colored
  * dot on its left edge mapped to the field's data shape so a user can scan
@@ -1458,7 +1459,7 @@ function fieldPinColor(sb) {
   const t = sb?.type
   if (t === 'switch' || t === 'checkbox') return 'green'
   if (t === 'slider' || t === 'number-input') return 'cyan'
-  if (t === 'short-input' || t === 'long-input' || t === 'text' || t === 'eval-input' || t === 'code') return 'blue'
+  if (t === 'short-input' || t === 'long-input' || t === 'text' || t === 'eval-input' || t === 'code' || t === 'code-editor') return 'blue'
   if (t === 'dropdown' || t === 'combobox') return 'purple'
   if (t === 'table' || t === 'checkbox-list' || t === 'grouped-checkbox-list' || t === 'tool-input' || t === 'skill-input') return 'orange'
   return 'grey'

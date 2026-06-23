@@ -220,6 +220,15 @@ export const PanelLeftIcon = (p) => (
 export const FolderIcon = (p) => (
   <I {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" /></I>
 )
+export const FolderOpenIcon = (p) => (
+  <I {...p}><path d="M5 19a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v1" /><path d="M3 13h18l-2 6H5z" /></I>
+)
+export const FilePlusIcon = (p) => (
+  <I {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" /></I>
+)
+export const MoreVerticalIcon = (p) => (
+  <I {...p}><circle cx="12" cy="5" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none" /></I>
+)
 export const PlayIcon = (p) => (
   <I {...p}><polygon points="7,5 19,12 7,19" fill="currentColor" stroke="none" /></I>
 )
@@ -310,6 +319,36 @@ export const ImageBase64Icon = (p) => (
   </I>
 )
 
+
+/** Chain of Thought — linked bubbles forming a reasoning chain */
+export const ChainOfThoughtIcon = (p) => (
+  <I {...p}>
+    <circle cx="5" cy="12" r="2.5" />
+    <circle cx="12" cy="7" r="2.5" />
+    <circle cx="19" cy="12" r="2.5" />
+    <circle cx="12" cy="17" r="2.5" />
+    <line x1="7.2" y1="11" x2="9.8" y2="8.4" />
+    <line x1="14.2" y1="8.4" x2="16.8" y2="11" />
+    <line x1="16.8" y1="13" x2="14.2" y2="15.6" />
+    <line x1="9.8" y1="15.6" x2="7.2" y2="13" />
+  </I>
+)
+
+/** Master Agent — crown / command hub above slave nodes */
+export const MasterAgentIcon = (p) => (
+  <I {...p}>
+    <polygon points="12,3 15,9 21,9 16.5,13.5 18,20 12,16.5 6,20 7.5,13.5 3,9 9,9" />
+  </I>
+)
+
+/** Slave Agent — small diamond specialist */
+export const SlaveAgentIcon = (p) => (
+  <I {...p}>
+    <rect x="4" y="6" width="16" height="12" rx="3" />
+    <path d="M9 10h6M9 14h4" />
+    <circle cx="17" cy="14" r="1.5" fill="currentColor" stroke="none" />
+  </I>
+)
 
 /** Colorful rocket deploy icon — dark blue stroke, light blue body, yellow window, red exhaust. */
 export const DeployIcon = ({ className, ...rest }) => (

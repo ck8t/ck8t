@@ -1,8 +1,10 @@
-// Evaluates a boolean expression and routes to the true or false branch.
-function evalSafe(expr, input) {
-  try { return new Function('input', `"use strict"; return (${expr})`)(input) } catch { return false }
-}
-export function run({ values, input }) {
-  const expr = String(values.expression || values.condition || 'true')
-  return { branch: evalSafe(expr, input) ? 'true' : 'false', value: input }
-}
+export default [
+  {
+    type: 'if_else',
+    run({ values, input }) {
+      const expr = values.expression || values.condition || 'true'
+      function evalSafe(e, val) { try { return !!new Function('input', `return (${e})`)(val) } catch { return false } }
+      return { branch: evalSafe(expr, input) ? 'true' : 'false', value: input }
+    },
+  },
+]

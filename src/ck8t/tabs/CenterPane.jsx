@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useTabsStore, workflowIdFromTab } from '../stores/tabs-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useWorkflowStore } from '../stores/workflow-store'
 import { entityColor } from '../components/CreateWorkflowModal'
 import Canvas from '../canvas/Canvas'
 import AgentEditor from './AgentEditor'
@@ -24,6 +25,7 @@ import SettingsTab from './SettingsTab'
 import WikiGuide, { BookIcon } from './WikiGuide'
 import TeamEditor from './TeamEditor'
 import BlockManager, { ManagerIcon } from '../components/BlockManager'
+import BlockDebuggerPanel, { BugIcon } from '../debug/BlockDebuggerPanel'
 import { WorkflowsIcon, AgentsIcon, SkillsIcon, TeamsIcon, SettingsIcon, XIcon } from '../components/icons'
 
 const ICONS = {
@@ -34,6 +36,7 @@ const ICONS = {
   settings: SettingsIcon,
   wiki: BookIcon,
   manager: ManagerIcon,
+  debugger: BugIcon,
 }
 
 export default function CenterPane() {
@@ -48,6 +51,7 @@ export default function CenterPane() {
   const closeTabsToRight = useTabsStore((s) => s.closeTabsToRight)
   const closeTabsToLeft = useTabsStore((s) => s.closeTabsToLeft)
   const openWorkflow = useWorkspaceStore((s) => s.openWorkflow)
+  const canvasDirty = useWorkflowStore((s) => s.canvasDirty)
   const initDone = useRef(false)
   const [ctxMenu, setCtxMenu] = useState(null)
 
@@ -91,7 +95,7 @@ export default function CenterPane() {
               onAuxClick={(e) => { if (e.button === 1) closeTab(t.id) }}
               onContextMenu={(e) => handleTabContextMenu(e, t)}
             >
-              <span className="bs-tab-dot" />
+              {t.kind === 'workflow' && canvasDirty && isActive && <span className="bs-tab-dot" />}
               <Icon className="bs-ico-xs" />
               <span className="bs-tab-label">{t.title}</span>
               <span
@@ -169,6 +173,7 @@ export default function CenterPane() {
         {active?.kind === 'settings' && <SettingsTab />}
         {active?.kind === 'wiki' && <WikiGuide />}
         {active?.kind === 'manager' && <BlockManager />}
+        {active?.kind === 'debugger' && <BlockDebuggerPanel />}
       </div>
     </div>
   )

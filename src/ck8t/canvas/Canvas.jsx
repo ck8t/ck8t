@@ -167,6 +167,8 @@ function CanvasInner() {
   })
   const nodesById = useMemo(() => Object.fromEntries(nodes.map((n) => [n.id, n])), [nodes])
   const [pendingDelete, setPendingDelete] = useState(null) // { ids[], titles[] } | null
+  const [pendingEdgeDelete, setPendingEdgeDelete] = useState(null) // { edges[] } | null
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState([])
   const [edgeMenu, setEdgeMenu] = useState(null) // { x, y, edgeId } | null
   const [paneMenu, setPaneMenu] = useState(null) // { x, y } | null
   const showMinimap = useWorkflowStore((s) => s.showMinimap)
@@ -233,14 +235,16 @@ function CanvasInner() {
   // Without this guard every ReactFlow render produces a new array → Zustand
   // write → re-render → onSelectionChange → infinite update loop.
   const prevSelKey = useRef('')
-  const onSelectionChange = useCallback(({ nodes: sel }) => {
+  const onSelectionChange = useCallback(({ nodes: sel, edges: selEdges }) => {
     const ids = sel.map((n) => n.id)
     const key = [...ids].sort().join(',')
-    if (key === prevSelKey.current) return
-    prevSelKey.current = key
-    setSelectedNodeIds(ids)
-    if (ids.length === 1) selectNode(ids[0])
-    else if (ids.length === 0) selectNode(null)
+    if (key !== prevSelKey.current) {
+      prevSelKey.current = key
+      setSelectedNodeIds(ids)
+      if (ids.length === 1) selectNode(ids[0])
+      else if (ids.length === 0) selectNode(null)
+    }
+    setSelectedEdgeIds((selEdges || []).map((e) => e.id))
   }, [setSelectedNodeIds, selectNode])
 
   // Edge update (drag an edge endpoint to a different handle)
@@ -537,6 +541,24 @@ function CanvasInner() {
     })
   }, [edges, activeEdgeIds, completedNodeIds, subBlockValues, nodes])
 
+  // Collect unique color pairs from gradient edges so we can render ONE stable <defs> block.
+  // url(#id) references are document-scoped across inline SVGs, so a single hidden <svg>
+  // outside ReactFlow is always found — avoids per-edge <defs> timing/re-render issues.
+  const gradientPairs = useMemo(() => {
+    const seen = new Set()
+    const pairs = []
+    for (const e of displayedEdges) {
+      if (e.type === 'gradient' && e.data?.srcColor && e.data?.tgtColor) {
+        const key = `${e.data.srcColor}-${e.data.tgtColor}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          pairs.push({ srcColor: e.data.srcColor, tgtColor: e.data.tgtColor })
+        }
+      }
+    }
+    return pairs
+  }, [displayedEdges])
+
   // ── Detect whether the drag contains a JSON file (not a block palette item) ──
   function isJsonFileDrag(e) {
     const items = e.dataTransfer?.items
@@ -673,7 +695,7 @@ function CanvasInner() {
     function onKey(e) {
       if (isEditableTarget(e.target)) return
       // Block all shortcuts while a confirm dialog is open
-      if (pendingDelete) return
+      if (pendingDelete || pendingEdgeDelete) return
       const meta = e.metaKey || e.ctrlKey
 
       // ⌘Z — Undo
@@ -742,8 +764,16 @@ function CanvasInner() {
       if (!meta && !e.shiftKey && !e.altKey && e.key === 'h') { e.preventDefault(); setCanvasMode('pan'); return }
       if (!meta && !e.shiftKey && !e.altKey && e.key === 'v') { e.preventDefault(); setCanvasMode('select'); return }
 
-      // Delete / Backspace — prompt before removing selected node(s).
+      // Delete / Backspace — prompt before removing selected node(s) or edge(s).
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Edge delete takes priority when edges are selected and no nodes are selected
+        if (selectedEdgeIds.length > 0 && selectedNodeIds.length === 0 && !selectedNodeId) {
+          const toDelete = edges.filter((ed) => selectedEdgeIds.includes(ed.id))
+          if (!toDelete.length) return
+          e.preventDefault()
+          setPendingEdgeDelete({ edges: toDelete })
+          return
+        }
         const rawIds = selectedNodeIds.length > 1 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : [])
         // Guard: only include IDs that actually exist in the current canvas (stale
         // selectedNodeIds from a previous workflow/load would otherwise wipe the canvas).
@@ -794,7 +824,7 @@ function CanvasInner() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedNodeId, selectedNodeIds, pendingDelete, removeNode, duplicateNode, duplicateNodes, beginRename, moveNodeBy, moveNodesBy, selectNode, fitView, zoomTo])
+  }, [selectedNodeId, selectedNodeIds, selectedEdgeIds, pendingDelete, pendingEdgeDelete, edges, removeNode, removeEdge, duplicateNode, duplicateNodes, beginRename, moveNodeBy, moveNodesBy, selectNode, fitView, zoomTo])
 
   // Fit view after zustand persist rehydrates nodes (async on refresh).
   // `fitView` as a static prop fires before rehydration completes, so we
@@ -893,6 +923,23 @@ function CanvasInner() {
           <HandIcon />
         </button>
       </div>
+      {/* Stable gradient defs — rendered once per unique color pair, outside ReactFlow so they
+          survive edge re-renders. url(#id) is document-scoped across inline SVGs. */}
+      <svg aria-hidden="true" style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
+        <defs>
+          {gradientPairs.map(({ srcColor, tgtColor }) => (
+            <linearGradient
+              key={`${srcColor}-${tgtColor}`}
+              id={`ck8t-grad-${srcColor.replace('#', '')}-${tgtColor.replace('#', '')}`}
+              gradientUnits="objectBoundingBox"
+              x1="0" y1="0" x2="1" y2="0"
+            >
+              <stop offset="0%"   stopColor={srcColor} />
+              <stop offset="100%" stopColor={tgtColor} />
+            </linearGradient>
+          ))}
+        </defs>
+      </svg>
       <ReactFlow
         nodes={nodes}
         edges={displayedEdges}
@@ -962,6 +1009,31 @@ function CanvasInner() {
                 totalEdges:  edges.length,
               })
               setPendingDelete(null)
+            }}
+          />
+        )
+      })()}
+
+      {pendingEdgeDelete && (() => {
+        const count = pendingEdgeDelete.edges.length
+        const label = count === 1
+          ? `Remove connection from "${nodesById[pendingEdgeDelete.edges[0].source]?.data?.title || pendingEdgeDelete.edges[0].source}" to "${nodesById[pendingEdgeDelete.edges[0].target]?.data?.title || pendingEdgeDelete.edges[0].target}"?`
+          : `Remove ${count} connections?`
+        return (
+          <ConfirmModal
+            title={count === 1 ? 'Remove connection?' : `Remove ${count} connections?`}
+            message={count === 1 ? `${label} This will disconnect the two blocks.` : `${count} selected connections will be removed. This will disconnect the affected blocks.`}
+            confirmLabel={count === 1 ? 'Remove connection' : `Remove ${count} connections`}
+            onCancel={() => setPendingEdgeDelete(null)}
+            onConfirm={() => {
+              pendingEdgeDelete.edges.forEach((e) => removeEdge(e.id))
+              logUiEvent('canvas.edge.disconnect', {
+                count,
+                edges: pendingEdgeDelete.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+                totalEdges: edges.length - count,
+              })
+              setSelectedEdgeIds([])
+              setPendingEdgeDelete(null)
             }}
           />
         )

@@ -1,11 +1,15 @@
-function jsonPath(obj, path) {
-  if (!path || path === '$') return obj
-  return path.replace(/^\./, '').split('.').reduce((o, k) => (o != null ? o[k] : undefined), obj)
-}
-export function run({ values, input }) {
-  let parsed = input
-  if (typeof input === 'string') { try { parsed = JSON.parse(input) } catch { return input } }
-  const result = jsonPath(parsed, String(values.path || ''))
-  if ((result === undefined || result === null) && values.fallback != null && values.fallback !== '') return values.fallback
-  return result !== undefined ? result : null
-}
+import { jsonPath, safeJson } from '../../block-utils.js'
+
+export default [
+  {
+    type: 'json_path',
+    run({ values, input }) {
+      let obj = typeof input === 'string' ? safeJson(input) : input
+      if (obj == null) obj = {}
+      const path = values.path || '$'
+      const result = path === '$' ? obj : jsonPath(obj, path)
+      if (result === undefined && values.fallback != null && values.fallback !== '') return values.fallback
+      return result !== undefined ? result : null
+    },
+  },
+]

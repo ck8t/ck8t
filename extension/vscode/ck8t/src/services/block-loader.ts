@@ -120,3 +120,45 @@ export function initBlockLoader(): void {
     }
   }
 }
+
+/**
+ * Resolve a community block's extension.js raw source + absolute path by scanning
+ * ~/.salilvnair/ck8t/blocks/ for the manifest declaring this blockType. Used by the
+ * debug-ws bridge route to re-instrument the file with breakpoints — independent of
+ * customBlockRunners, which only retains the already-bound run() function, not source text.
+ *
+ * Core blocks are out of scope here: the only core blocks with a genuinely separate
+ * extension.js (master_agent/slave_agent/chain_of_thought) re-export it from client.js,
+ * which the browser-only debug path already handles via getActiveDebugRun()'s re-export
+ * detection — there's currently no core block needing this lookup.
+ */
+export function resolveRunnerSource(blockType: string): { source: string; filePath: string } | null {
+  const dir = getBlocksDir();
+  if (!fs.existsSync(dir)) return null;
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+
+    const manifestPath = path.join(dir, entry.name, 'ck8t-block.json');
+    if (!fs.existsSync(manifestPath)) continue;
+
+    let manifest: { blocks?: { type?: string }[]; runners?: { extension?: string } };
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    } catch {
+      continue;
+    }
+
+    const hasType = (manifest.blocks ?? []).some((b) => b.type === blockType);
+    if (!hasType) continue;
+
+    const runnerRelPath = manifest.runners?.extension;
+    if (!runnerRelPath) return null;
+
+    const filePath = path.join(dir, entry.name, runnerRelPath);
+    if (!fs.existsSync(filePath)) return null;
+
+    return { source: fs.readFileSync(filePath, 'utf-8'), filePath };
+  }
+  return null;
+}

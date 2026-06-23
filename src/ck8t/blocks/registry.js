@@ -56,6 +56,10 @@ const registry = {
   skill: Core.SkillBlock,
   image_url_preview: Core.ImageUrlPreviewBlock,
   image_url_to_base64: Core.ImageUrlToBase64Block,
+  // Multi-agent orchestration blocks
+  chain_of_thought: Core.ChainOfThoughtBlock,
+  master_agent: Core.MasterAgentBlock,
+  slave_agent: Core.SlaveAgentBlock,
   // NS9 knowledge graph blocks
   ns9_query: Core.Ns9QueryBlock,
   ns9_rlhf: Core.Ns9RlhfBlock,
@@ -142,6 +146,8 @@ export function onRegistryChange(fn) {
  */
 export const customBrowserBlockRunners = new Map()
 
+export { coreBlockRunners } from './core-block-runners.js'
+
 /**
  * Convert a plain SVG path string from a community block's `iconSvg` field
  * into a lightweight React component so it renders inside the node icon well.
@@ -227,6 +233,23 @@ export async function loadInstalledBlocks() {
         } catch (err) {
           console.warn(`[ck8t] Failed to load block UI "${blockEntry.type}" from "${manifest.id}":`, err)
         }
+
+        // Self-register a browser runner if the block ships one.
+        // Checks blockEntry.clientRunner first, then manifest.runners.client as fallback.
+        const clientRunnerPath = blockEntry.clientRunner || manifest.runners?.client
+        if (clientRunnerPath && !customBrowserBlockRunners.has(blockEntry.type)) {
+          const runnerUrl = `${base}/block-manager/ui/${encodeURIComponent(manifest.id)}/${clientRunnerPath}`
+          try {
+            const runnerMod = await import(/* @vite-ignore */ runnerUrl)
+            const runFn = runnerMod.run ?? runnerMod.default?.run ?? runnerMod.default?.[0]?.run ?? null
+            if (typeof runFn === 'function') {
+              customBrowserBlockRunners.set(blockEntry.type, runFn)
+              console.log('[ck8t] browser runner registered from manifest:', blockEntry.type)
+            }
+          } catch (err) {
+            console.warn(`[ck8t] Failed to load client runner for "${blockEntry.type}" from "${manifest.id}":`, err)
+          }
+        }
       }
     }
   } catch {
@@ -274,6 +297,7 @@ export const CATEGORY_CONFIG = {
       { id: 'data',       label: 'Data & Transform',  types: ['json_map', 'json_path', 'text_template', 'table', 'filter', 'sort', 'aggregate', 'merge'] },
       { id: 'timing',     label: 'Timing',            types: ['wait', 'delay'] },
       { id: 'ai',         label: 'AI',                types: ['agent', 'ai_classifier'] },
+      { id: 'orchestration', label: 'Orchestration',  types: ['master_agent', 'slave_agent', 'chain_of_thought'] },
     ],
   },
   tools: {

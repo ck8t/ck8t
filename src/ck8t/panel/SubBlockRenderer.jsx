@@ -73,7 +73,7 @@ export default function SubBlockRenderer({ sub, value, onChange, blockValues, no
 
   // Debug mode state for this node (drives Monaco breakpoint gutter)
   const isDebugMode = useBlockDebugStore((s) => s.debugEnabled.has(nodeId))
-  const breakpoints = useBlockDebugStore((s) => s.breakpoints[nodeId] || [])
+  const breakpoints = useBlockDebugStore((s) => s.breakpoints[nodeId]) || []
   const setBreakpoints = useBlockDebugStore((s) => s.setBreakpoints)
 
   const options = typeof sub.options === 'function' ? safeCall(sub.options, blockValues) : sub.options

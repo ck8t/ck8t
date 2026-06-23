@@ -55,18 +55,15 @@ export default function CreateWorkflowModal({
     setTeamIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])
   }
 
-  const canSubmit = name.trim().length > 0
+  const canSubmit = name.trim().length > 0 && !!folderId
 
   function submit(e) {
     e.preventDefault()
     if (!canSubmit) return
-    onCreate?.(name.trim(), teamIds, folderId || null, color, description)
+    onCreate?.(name.trim(), teamIds, folderId, color, description)
   }
 
-  const folderOptions = [
-    { id: '', label: '— No folder (root) —' },
-    ...folders.map((f) => ({ id: f.id, label: f.name })),
-  ]
+  const folderOptions = folders.map((f) => ({ id: f.id, label: f.name }))
 
   return createPortal(
     <div className="bs-modal-overlay" onClick={onCancel}>
@@ -133,17 +130,22 @@ export default function CreateWorkflowModal({
             </div>
           </div>
 
-          {/* Folder */}
-          {folders.length > 0 && (
-            <div className="bs-field">
-              <label className="bs-label">Folder</label>
+          {/* Folder — required */}
+          <div className="bs-field">
+            <label className="bs-label">Folder</label>
+            {folders.length === 0 ? (
+              <div className="bs-hint bs-hint-warn">
+                No folders yet — create one in the sidebar first.
+              </div>
+            ) : (
               <StyledSelect
                 value={folderId || ''}
                 options={folderOptions}
                 onChange={(id) => setFolderId(id || null)}
+                placeholder="Select a folder…"
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Teams */}
           <div className="bs-field">

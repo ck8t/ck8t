@@ -1,7 +1,8 @@
 {
   "id": "loop",
   "name": "Loop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
-  "blocks": [{ "type": "loop", "ui": "ui/loop.js" }]
+  "blocks": [{ "type": "loop", "ui": "ui/loop.js" }],
+  "runners": { "client": "runners/client.js" }
 }

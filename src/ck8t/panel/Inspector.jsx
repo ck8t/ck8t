@@ -82,21 +82,23 @@ export default function Inspector() {
         <div className="bs-inspector-title-row">
           <div className="bs-inspector-swatch" style={{ background: cfg.bgColor }} />
           <div>
-            <div className="bs-inspector-title">{cfg.name}</div>
+            <div className="bs-inspector-title" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              {cfg.name}
+              {/* About icon — inline circle next to block name */}
+              <button
+                className={`bsdoc-about-btn ${showDocs ? 'bsdoc-about-active' : ''}`}
+                onClick={() => setShowDocs((v) => !v)}
+                title={showDocs ? 'Close documentation' : 'About this block'}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </button>
+            </div>
             <div className="bs-inspector-sub">{cfg.description}</div>
           </div>
-          {/* About icon — toggles documentation overlay */}
-          <button
-            className={`bsdoc-about-btn ${showDocs ? 'bsdoc-about-active' : ''}`}
-            onClick={() => setShowDocs((v) => !v)}
-            title={showDocs ? 'Close documentation' : 'About this block'}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
-          </button>
           <button className="bs-btn-danger-ghost" onClick={() => setConfirmDelete(true)} title="Delete block">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="3 6 5 6 21 6" />
@@ -145,7 +147,7 @@ export default function Inspector() {
             </label>
             <SubBlockRenderer
               sub={sb}
-              value={values[sb.id]}
+              value={values[sb.id] ?? sb.defaultValue}
               blockValues={values}
               nodeId={node.id}
               onChange={(id, v) => {

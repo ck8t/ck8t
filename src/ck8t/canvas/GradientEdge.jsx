@@ -21,31 +21,20 @@ export default function GradientEdge({
 
   const srcColor = data.srcColor || '#94a3b8'
   const tgtColor = data.tgtColor || '#94a3b8'
-  const gradId = `ge-${id}`
+  // Reference the stable global gradient defined in Canvas.jsx's EdgeGradientDefs.
+  // Keyed by color pair so the same gradient is reused across all edges of the same type pairing.
+  const gradId = `ck8t-grad-${srcColor.replace('#', '')}-${tgtColor.replace('#', '')}`
 
   return (
-    <>
-      <defs>
-        <linearGradient
-          id={gradId}
-          gradientUnits="userSpaceOnUse"
-          x1={sourceX} y1={sourceY}
-          x2={targetX} y2={targetY}
-        >
-          <stop offset="0%"   stopColor={srcColor} />
-          <stop offset="100%" stopColor={tgtColor} />
-        </linearGradient>
-      </defs>
-      <path
-        id={id}
-        className="react-flow__edge-path"
-        d={edgePath}
-        markerEnd={markerEnd}
-        style={{
-          ...style,
-          stroke: `url(#${gradId})`,
-        }}
-      />
-    </>
+    <path
+      id={id}
+      className="react-flow__edge-path"
+      d={edgePath}
+      markerEnd={markerEnd}
+      style={{
+        ...style,
+        stroke: `url(#${gradId}) ${srcColor}`,
+      }}
+    />
   )
 }

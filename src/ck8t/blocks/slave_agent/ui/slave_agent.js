@@ -19,7 +19,7 @@
  *   confidence           — number  — 0–1 self-assessed confidence
  *   needs_clarification  — boolean — if true, master may trigger adaptive re-plan
  */
-import { AgentIcon } from '../../../components/icons'
+import { SlaveAgentIcon } from '../../../components/icons'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks } from '../../utils'
 import { defineCk8tBlock } from '../../ck8t-block-base.js'
 
@@ -40,7 +40,7 @@ export const SlaveAgentBlock = defineCk8tBlock({
   `,
   category: 'blocks',
   bgColor: '#0284C7',
-  icon: AgentIcon,
+  icon: SlaveAgentIcon,
   tags: ['llm', 'specialist', 'multi-agent', 'slave', 'master-slave'],
 
   subBlocks: [

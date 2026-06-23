@@ -3,6 +3,7 @@ import { executeGraph } from '../../engine/graph-runner';
 import { callAgent } from '../../services/llm';
 import { callTool } from '../../services/mcp';
 import { customBlockRunners } from '../../services/block-loader';
+import { runDebugBlock } from './debug-ws';
 import type { Workflow } from '../../types';
 
 export function runRouter() {
@@ -10,11 +11,12 @@ export function runRouter() {
 
   /* POST /api/v1/ck8t/run-block  — run a single community block server-side */
   router.post('/ck8t/run-block', async (req: Request, res: Response) => {
-    const { type, values, input, inputsByHandle } = req.body as {
+    const { type, values, input, inputsByHandle, __ck8tDebug } = req.body as {
       type: string;
       values: Record<string, unknown>;
       input: unknown;
       inputsByHandle?: Record<string, unknown>;
+      __ck8tDebug?: { sessionId: string; breakpoints: number[] };
     };
     if (!type) return res.status(400).json({ error: 'type is required' });
     const runner = customBlockRunners.get(type);
@@ -30,17 +32,27 @@ export function runRouter() {
     const heartbeat = setInterval(() => { try { res.write(' '); } catch (_) {} }, 30_000);
 
     try {
-      const output = await runner({
-        values: values ?? {},
-        input: input ?? null,
-        inputsByHandle: inputsByHandle ?? {},
-        outputs: {},
-        node: { id: type },
-        allNodes: [],
-        subBlockValues: {},
-        callAgent,
-        callTool,
-      });
+      // __ck8tDebug is only ever set by the block's own client.js when the canvas-Run
+      // debug session has breakpoints on its extension.js tab (see ctx.__ck8tExtDebug
+      // in src/ck8t/run/graph-runner.js). Every other caller omits it and hits the
+      // exact same runner(opts) path this route has always used.
+      const output = __ck8tDebug
+        ? await runDebugBlock(__ck8tDebug.sessionId, type, __ck8tDebug.breakpoints ?? [], {
+            values: values ?? {},
+            input: input ?? null,
+            inputsByHandle: inputsByHandle ?? {},
+          })
+        : await runner({
+            values: values ?? {},
+            input: input ?? null,
+            inputsByHandle: inputsByHandle ?? {},
+            outputs: {},
+            node: { id: type },
+            allNodes: [],
+            subBlockValues: {},
+            callAgent,
+            callTool,
+          });
       clearInterval(heartbeat);
       res.end(JSON.stringify({ output }));
     } catch (err: unknown) {

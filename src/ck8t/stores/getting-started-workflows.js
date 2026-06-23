@@ -1520,12 +1520,1139 @@ const W45 = wf(
   },
 )
 
+/* ════════════════════════════════════════════════════════════════
+ * Community Block Workflows (W46-W65)
+ * Tests story_splitter (browser / client.js path) and storybook_pdf
+ * (extension-host / extension.js path via fetch delegate).
+ * These are the primary workflows for exercising the Node-side
+ * Block Debugger (right-click block → Debug → set breakpoint on
+ * extension.js → press canvas Run).
+ * ════════════════════════════════════════════════════════════════ */
+
+const STORY_SAMPLE = `# The Lighthouse Keeper
+
+## Chapter One: The Storm
+
+The waves crashed against the rocks below as Elena climbed the spiral stairs for the thousandth time. Her lantern swayed in the howling wind. Every night was the same ritual — clean the lens, trim the wick, and keep the light burning.
+
+## Chapter Two: The Stranger
+
+A knock at the door surprised her. No one ever came to the lighthouse. She opened it to find a drenched sailor, eyes wide, clutching a waterproof satchel to his chest. "I have something for you," he said.
+
+## Chapter Three: The Letter
+
+Inside the satchel was a letter sealed with wax — her mother's seal. She had been dead for seven years. Elena's hands trembled as she broke the seal and unfolded the yellowed paper.
+
+## Chapter Four: The Truth
+
+The letter told of a treasure — not gold, but a set of coordinates. The sailor watched silently as she traced them on her chart. They pointed to the reef just offshore. The one everyone said was cursed.`
+
+/* ────────────────────────────────────────────────────────────────
+ * 46 — Story Splitter: Chapter Mode
+ * ──────────────────────────────────────────────────────────────── */
+const W46 = wf(
+  'wf_gs_46_story_split_chapter',
+  '46 · Story Splitter — Chapter Mode',
+  'Split a story into chapters using ## heading markers. story_splitter runs in the browser (client.js).',
+  [
+    n('w46_s',  'starter',      'Start',    0),
+    n('w46_i',  'user_input',   'Story',    1),
+    n('w46_sp', 'story_splitter','Split',   2),
+    n('w46_p',  'show_preview', 'Scenes',   3),
+  ],
+  [
+    e('w46_s',  'out',    'w46_i',  'in'),
+    e('w46_i',  'value',  'w46_sp', 'in_input'),
+    e('w46_sp', 'scenes', 'w46_p',  'in_input'),
+  ],
+  {
+    w46_s: { startWorkflow: 'manual' },
+    w46_i: { kind: 'longtext', label: 'Story text', defaultValue: STORY_SAMPLE, required: true },
+    w46_sp: { split_by: 'scene', include_heading: true, max_scenes: '0' },
+    w46_p: { label: 'Split scenes' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 47 — Story Splitter: Paragraph Mode
+ * ──────────────────────────────────────────────────────────────── */
+const W47 = wf(
+  'wf_gs_47_story_split_paragraph',
+  '47 · Story Splitter — Paragraph Mode',
+  'Split a story into individual paragraphs (blank-line separator). Good for granular processing.',
+  [
+    n('w47_s',  'starter',       'Start',    0),
+    n('w47_i',  'user_input',    'Story',    1),
+    n('w47_sp', 'story_splitter','Split',    2),
+    n('w47_fn', 'function',      'Count',    3),
+    n('w47_p',  'show_preview',  'Preview',  4),
+  ],
+  [
+    e('w47_s',  'out',    'w47_i',  'in'),
+    e('w47_i',  'value',  'w47_sp', 'in_input'),
+    e('w47_sp', 'scenes', 'w47_fn', 'in_input'),
+    e('w47_fn', 'result', 'w47_p',  'in_input'),
+  ],
+  {
+    w47_s: { startWorkflow: 'manual' },
+    w47_i: { kind: 'longtext', label: 'Story text', defaultValue: STORY_SAMPLE, required: true },
+    w47_sp: { split_by: 'paragraph', include_heading: false, max_scenes: '0' },
+    w47_fn: { language: 'javascript', code: 'return { paragraph_count: input.length, paragraphs: input }' },
+    w47_p: { label: 'Paragraph count + list' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 48 — Story Splitter: Extract First Scene
+ * ──────────────────────────────────────────────────────────────── */
+const W48 = wf(
+  'wf_gs_48_story_first_scene',
+  '48 · Story Splitter — Extract First Scene',
+  'Split a story and extract only the first scene using the .first output port.',
+  [
+    n('w48_s',  'starter',       'Start',   0),
+    n('w48_sp', 'story_splitter','Split',   1),
+    n('w48_t',  'text_template', 'Format',  2),
+    n('w48_p',  'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w48_s',  'out',   'w48_sp', 'in'),
+    e('w48_sp', 'first', 'w48_t',  'in_input'),
+    e('w48_t',  'result','w48_p',  'in_input'),
+  ],
+  {
+    w48_s: { startWorkflow: 'manual' },
+    w48_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w48_t: { template: '## {{title}}\n\n{{content}}\n\n---\n*Scene {{index}} of the story*' },
+    w48_p: { label: 'First scene' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 49 — Story Splitter: Scene Stats
+ * ──────────────────────────────────────────────────────────────── */
+const W49 = wf(
+  'wf_gs_49_story_stats',
+  '49 · Story Splitter — Scene Stats',
+  'Split a story and compute word count and average scene length across all scenes.',
+  [
+    n('w49_s',  'starter',       'Start',   0),
+    n('w49_sp', 'story_splitter','Split',   1),
+    n('w49_fn', 'function',      'Stats',   2),
+    n('w49_p',  'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w49_s',  'out',    'w49_sp', 'in'),
+    e('w49_sp', 'scenes', 'w49_fn', 'in_input'),
+    e('w49_fn', 'result', 'w49_p',  'in_input'),
+  ],
+  {
+    w49_s: { startWorkflow: 'manual' },
+    w49_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w49_fn: {
+      language: 'javascript',
+      code: `const scenes = input
+const totalWords = scenes.reduce((sum, s) => sum + s.content.split(/\\s+/).length, 0)
+return {
+  scene_count: scenes.count ?? scenes.length,
+  total_words: totalWords,
+  avg_words_per_scene: Math.round(totalWords / scenes.length),
+  titles: scenes.map(s => s.title),
+}`,
+    },
+    w49_p: { label: 'Story statistics' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 50 — Story Splitter: Max Scenes Limit
+ * ──────────────────────────────────────────────────────────────── */
+const W50 = wf(
+  'wf_gs_50_story_max_scenes',
+  '50 · Story Splitter — Max Scenes Limit',
+  'Use max_scenes to cap how many scenes are returned. Useful for previews or token budgeting.',
+  [
+    n('w50_s',  'starter',       'Start',   0),
+    n('w50_i',  'user_input',    'Limit',   1),
+    n('w50_sp', 'story_splitter','Split',   2),
+    n('w50_p',  'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w50_s',  'out',    'w50_i',  'in'),
+    e('w50_i',  'value',  'w50_sp', 'in_max_scenes'),
+    e('w50_sp', 'scenes', 'w50_p',  'in_input'),
+  ],
+  {
+    w50_s: { startWorkflow: 'manual' },
+    w50_i: { kind: 'number', label: 'Max scenes to return', defaultValue: '2', required: true },
+    w50_sp: { split_by: 'scene', include_heading: true,
+               input: STORY_SAMPLE },
+    w50_p: { label: 'Capped scene list' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 51 — Story → Agent Summarize Each Scene
+ * ──────────────────────────────────────────────────────────────── */
+const W51 = wf(
+  'wf_gs_51_story_summarize_scenes',
+  '51 · Story Pipeline — Summarize Each Scene (agent)',
+  'Split a story into scenes then run an AI agent to summarize each one.',
+  [
+    n('w51_s',  'starter',       'Start',   0),
+    n('w51_sp', 'story_splitter','Split',   1),
+    n('w51_fe', 'for_each',      'Each',    2),
+    n('w51_p',  'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w51_s',  'out',        'w51_sp', 'in'),
+    e('w51_sp', 'scenes',     'w51_fe', 'in_input'),
+    e('w51_fe', 'iterations', 'w51_p',  'in_input'),
+  ],
+  {
+    w51_s:  { startWorkflow: 'manual' },
+    w51_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w51_fe: { collection: 'input', itemVar: 'scene', maxConcurrency: 2 },
+    w51_p:  { label: 'Per-scene iterations' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 52 — Story → Filter Short Scenes
+ * ──────────────────────────────────────────────────────────────── */
+const W52 = wf(
+  'wf_gs_52_story_filter_scenes',
+  '52 · Story Pipeline — Filter Short Scenes',
+  'Split into scenes, then filter out any scene with fewer than 50 words.',
+  [
+    n('w52_s',  'starter',       'Start',   0),
+    n('w52_sp', 'story_splitter','Split',   1),
+    n('w52_fn', 'function',      'Tag',     2),
+    n('w52_fi', 'filter',        'Filter',  3),
+    n('w52_p',  'show_preview',  'Preview', 4),
+  ],
+  [
+    e('w52_s',  'out',    'w52_sp', 'in'),
+    e('w52_sp', 'scenes', 'w52_fn', 'in_input'),
+    e('w52_fn', 'result', 'w52_fi', 'in_items'),
+    e('w52_fi', 'kept',   'w52_p',  'in_input'),
+  ],
+  {
+    w52_s:  { startWorkflow: 'manual' },
+    w52_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w52_fn: {
+      language: 'javascript',
+      code: `return input.map(s => ({ ...s, word_count: s.content.split(/\\s+/).length }))`,
+    },
+    w52_fi: { conditions: [{ field: 'word_count', operator: '>=', value: '50' }], mode: 'keep' },
+    w52_p:  { label: 'Long scenes only (≥50 words)' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 53 — Story → Sort by Length
+ * ──────────────────────────────────────────────────────────────── */
+const W53 = wf(
+  'wf_gs_53_story_sort_scenes',
+  '53 · Story Pipeline — Sort Scenes by Length',
+  'Split into scenes, tag each with word count, then sort longest-first.',
+  [
+    n('w53_s',  'starter',       'Start',   0),
+    n('w53_sp', 'story_splitter','Split',   1),
+    n('w53_fn', 'function',      'Tag',     2),
+    n('w53_so', 'sort',          'Sort',    3),
+    n('w53_p',  'show_preview',  'Preview', 4),
+  ],
+  [
+    e('w53_s',  'out',    'w53_sp', 'in'),
+    e('w53_sp', 'scenes', 'w53_fn', 'in_input'),
+    e('w53_fn', 'result', 'w53_so', 'in_items'),
+    e('w53_so', 'sorted', 'w53_p',  'in_input'),
+  ],
+  {
+    w53_s:  { startWorkflow: 'manual' },
+    w53_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w53_fn: {
+      language: 'javascript',
+      code: `return input.map(s => ({ ...s, word_count: s.content.split(/\\s+/).length }))`,
+    },
+    w53_so: { sortKey: 'word_count', order: 'desc', type: 'number' },
+    w53_p:  { label: 'Scenes ranked by length' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 54 — Story → Agent: Extract Scene Titles
+ * ──────────────────────────────────────────────────────────────── */
+const W54 = wf(
+  'wf_gs_54_story_extract_titles',
+  '54 · Story Pipeline — AI Scene Title Generator',
+  'Split a story into scenes, then use an agent to suggest a better title for each scene.',
+  [
+    n('w54_s',  'starter',       'Start',   0),
+    n('w54_sp', 'story_splitter','Split',   1),
+    n('w54_fn', 'function',      'Format',  2),
+    n('w54_ag', 'agent',         'Titles',  3),
+    n('w54_p',  'show_preview',  'Preview', 4),
+  ],
+  [
+    e('w54_s',  'out',    'w54_sp', 'in'),
+    e('w54_sp', 'scenes', 'w54_fn', 'in_input'),
+    e('w54_fn', 'result', 'w54_ag', 'in_input'),
+    e('w54_ag', 'data',   'w54_p',  'in_input'),
+  ],
+  {
+    w54_s:  { startWorkflow: 'manual' },
+    w54_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w54_fn: {
+      language: 'javascript',
+      code: `return input.map(s => \`Scene \${s.index}: \${s.title}\\n\${s.content.slice(0,120)}...\`).join('\\n\\n')`,
+    },
+    w54_ag: {
+      model: 'gpt-4.1',
+      systemPrompt: 'You are a creative writing editor. Suggest one punchy, evocative title per scene.',
+      userPrompt: 'Here are scenes from a story. For each, suggest a better title (one line each):\n\n{{input}}',
+      temperature: 0.7,
+    },
+    w54_p: { label: 'Suggested scene titles' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 55 — Story → Aggregate Word Count
+ * ──────────────────────────────────────────────────────────────── */
+const W55 = wf(
+  'wf_gs_55_story_word_count',
+  '55 · Story Pipeline — Total Word Count',
+  'Split a story into scenes, tag each with word count, then sum total words.',
+  [
+    n('w55_s',  'starter',       'Start',   0),
+    n('w55_sp', 'story_splitter','Split',   1),
+    n('w55_fn', 'function',      'Tag',     2),
+    n('w55_ag', 'aggregate',     'Sum',     3),
+    n('w55_p',  'show_preview',  'Preview', 4),
+  ],
+  [
+    e('w55_s',  'out',    'w55_sp', 'in'),
+    e('w55_sp', 'scenes', 'w55_fn', 'in_input'),
+    e('w55_fn', 'result', 'w55_ag', 'in_items'),
+    e('w55_ag', 'result', 'w55_p',  'in_input'),
+  ],
+  {
+    w55_s:  { startWorkflow: 'manual' },
+    w55_sp: { split_by: 'scene', include_heading: true, max_scenes: '0',
+               input: STORY_SAMPLE },
+    w55_fn: {
+      language: 'javascript',
+      code: `return input.map(s => ({ ...s, word_count: s.content.split(/\\s+/).length }))`,
+    },
+    w55_ag: { operation: 'sum', field: 'word_count' },
+    w55_p:  { label: 'Total word count' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 56 — Storybook PDF: Single Chapter (extension.js path)
+ * ──────────────────────────────────────────────────────────────── */
+const W56 = wf(
+  'wf_gs_56_storybook_pdf_basic',
+  '56 · Storybook PDF — Generate PDF (extension.js path)',
+  'Generate a PDF from a story. storybook_pdf delegates to extension.js via /ck8t/run-block — the VS Code extension must be active.',
+  [
+    n('w56_s',   'starter',      'Start',    0),
+    n('w56_i',   'user_input',   'Story',    1),
+    n('w56_pdf', 'storybook_pdf','PDF',      2),
+    n('w56_p',   'show_preview', 'Preview',  3),
+  ],
+  [
+    e('w56_s',   'out',    'w56_i',   'in'),
+    e('w56_i',   'value',  'w56_pdf', 'in_input'),
+    e('w56_pdf', 'pdf',    'w56_p',   'in_input'),
+  ],
+  {
+    w56_s: { startWorkflow: 'manual' },
+    w56_i: { kind: 'longtext', label: 'Story text (Markdown with ## chapter headings)', defaultValue: STORY_SAMPLE, required: true },
+    w56_pdf: { title: 'My Story', author: 'CK8T Demo', fontSize: '12', pageSize: 'A4' },
+    w56_p: { label: 'Generated PDF' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 57 — Full Pipeline: Split → PDF
+ * ──────────────────────────────────────────────────────────────── */
+const W57 = wf(
+  'wf_gs_57_story_to_pdf',
+  '57 · Full Story Pipeline — Split Scenes → PDF',
+  'Split a story into scenes with story_splitter (browser), then generate a PDF with storybook_pdf (extension host). Tests both execution paths.',
+  [
+    n('w57_s',   'starter',       'Start',   0),
+    n('w57_sp',  'story_splitter','Split',   1),
+    n('w57_pdf', 'storybook_pdf', 'PDF',     2),
+    n('w57_p',   'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w57_s',   'out',    'w57_sp',  'in'),
+    e('w57_sp',  'scenes', 'w57_pdf', 'in_scenes'),
+    e('w57_pdf', 'pdf',    'w57_p',   'in_input'),
+  ],
+  {
+    w57_s:   { startWorkflow: 'manual' },
+    w57_sp:  { split_by: 'scene', include_heading: true, max_scenes: '0',
+                input: STORY_SAMPLE },
+    w57_pdf: { title: 'The Lighthouse Keeper', author: 'Demo Author', fontSize: '12', pageSize: 'A4' },
+    w57_p:   { label: 'Generated PDF' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 58 — Full Pipeline: Split → PDF → Save
+ * ──────────────────────────────────────────────────────────────── */
+const W58 = wf(
+  'wf_gs_58_story_pdf_save',
+  '58 · Story Pipeline — Split → PDF → Save to Disk',
+  'Full pipeline: split story → generate PDF (extension.js path) → save the PDF file to disk.',
+  [
+    n('w58_s',   'starter',       'Start',   0),
+    n('w58_sp',  'story_splitter','Split',   1),
+    n('w58_pdf', 'storybook_pdf', 'PDF',     2),
+    n('w58_sv',  'save_to_files', 'Save',    3),
+  ],
+  [
+    e('w58_s',   'out',    'w58_sp',  'in'),
+    e('w58_sp',  'scenes', 'w58_pdf', 'in_scenes'),
+    e('w58_pdf', 'pdf',    'w58_sv',  'in_input'),
+  ],
+  {
+    w58_s:   { startWorkflow: 'manual' },
+    w58_sp:  { split_by: 'scene', include_heading: true, max_scenes: '0',
+                input: STORY_SAMPLE },
+    w58_pdf: { title: 'The Lighthouse Keeper', author: 'Demo Author', fontSize: '12', pageSize: 'A4' },
+    w58_sv:  { path: './output/story.pdf', format: 'binary', overwrite: true },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 59 — Story: User Input → Split → Count → Preview
+ * ──────────────────────────────────────────────────────────────── */
+const W59 = wf(
+  'wf_gs_59_story_user_input',
+  '59 · Story Splitter — User Input → Scene Count',
+  'Paste your own story text, split it into scenes, and see the count + scene list.',
+  [
+    n('w59_s',  'starter',       'Start',   0),
+    n('w59_i',  'user_input',    'Story',   1),
+    n('w59_sp', 'story_splitter','Split',   2),
+    n('w59_fn', 'function',      'Summary', 3),
+    n('w59_p',  'show_preview',  'Preview', 4),
+  ],
+  [
+    e('w59_s',  'out',    'w59_i',  'in'),
+    e('w59_i',  'value',  'w59_sp', 'in_input'),
+    e('w59_sp', 'scenes', 'w59_fn', 'in_input'),
+    e('w59_fn', 'result', 'w59_p',  'in_input'),
+  ],
+  {
+    w59_s:  { startWorkflow: 'manual' },
+    w59_i:  { kind: 'longtext', label: 'Paste your story (use ## Scene headings)', defaultValue: STORY_SAMPLE, required: true },
+    w59_sp: { split_by: 'scene', include_heading: true, max_scenes: '0' },
+    w59_fn: {
+      language: 'javascript',
+      code: `return {
+  count: input.length,
+  titles: input.map(s => s.title),
+  first_100_chars: input.map(s => s.content.slice(0, 100) + '...')
+}`,
+    },
+    w59_p: { label: 'Scene summary' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 60 — Story: Parallel Split + PDF
+ * ──────────────────────────────────────────────────────────────── */
+const W60 = wf(
+  'wf_gs_60_story_parallel',
+  '60 · Story Pipeline — Parallel Split + PDF',
+  'Fan out from starter: one branch counts scenes (browser), another generates PDF (extension.js). Both run in parallel.',
+  [
+    n('w60_s',   'starter',       'Start',   0),
+    n('w60_sp1', 'story_splitter','Count',   1, -0.4),
+    n('w60_pdf', 'storybook_pdf', 'PDF',     1,  0.4),
+    n('w60_fn',  'function',      'Stats',   2, -0.4),
+    n('w60_mg',  'merge',         'Merge',   2,  0),
+    n('w60_p',   'show_preview',  'Preview', 3),
+  ],
+  [
+    e('w60_s',   'out',    'w60_sp1', 'in'),
+    e('w60_s',   'out',    'w60_pdf', 'in'),
+    e('w60_sp1', 'scenes', 'w60_fn',  'in_input'),
+    e('w60_fn',  'result', 'w60_mg',  'in_input1'),
+    e('w60_pdf', 'pdf',    'w60_mg',  'in_input2'),
+    e('w60_mg',  'merged', 'w60_p',   'in_input'),
+  ],
+  {
+    w60_s:   { startWorkflow: 'manual' },
+    w60_sp1: { split_by: 'scene', include_heading: true, max_scenes: '0',
+                input: STORY_SAMPLE },
+    w60_pdf: { title: 'The Lighthouse Keeper', author: 'Demo', fontSize: '12', pageSize: 'A4',
+                input: STORY_SAMPLE },
+    w60_fn:  { language: 'javascript', code: 'return { scene_count: input.length, titles: input.map(s => s.title) }' },
+    w60_mg:  { mode: 'deep_merge' },
+    w60_p:   { label: 'Stats + PDF result' },
+  },
+)
+
+/* ════════════════════════════════════════════════════════════════
+ * Community Block Workflows (W61–W64) — AI / Reasoning Blocks
+ * ════════════════════════════════════════════════════════════════ */
+
+/* ────────────────────────────────────────────────────────────────
+ * 61 — AI Classifier: intent detection
+ * ──────────────────────────────────────────────────────────────── */
+const W61 = wf(
+  'wf_gs_61_ai_classifier',
+  '61 · AI Classifier — Intent Detection',
+  'Use ai_classifier to route user input into one of several defined categories. The model returns the best-matching category and a confidence score.',
+  [
+    n('w61_s',  'starter',       'Start',    0),
+    n('w61_c',  'ai_classifier', 'Classify', 1),
+    n('w61_p',  'show_preview',  'Preview',  2),
+  ],
+  [
+    e('w61_s', 'out',      'w61_c', 'in'),
+    e('w61_c', 'category', 'w61_p', 'in_input'),
+  ],
+  {
+    w61_s: { startWorkflow: 'manual' },
+    w61_c: {
+      systemPrompt: 'Classify the user message into exactly one category.',
+      text: 'I need to reset my password and also my account is showing the wrong billing amount.',
+      categories: 'account_access\nbilling_issue\ntechnical_support\ngeneral_inquiry',
+      outputMode: 'category',
+    },
+    w61_p: { label: 'Detected category' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 62 — Chain of Thought: multi-step reasoning
+ * ──────────────────────────────────────────────────────────────── */
+const W62 = wf(
+  'wf_gs_62_chain_of_thought',
+  '62 · Chain of Thought — Multi-Step Reasoning',
+  'chain_of_thought forces the model to show its work step-by-step before giving a final answer. Wire the "conclusion" output to downstream blocks.',
+  [
+    n('w62_s',  'starter',         'Start',    0),
+    n('w62_cot','chain_of_thought','Reason',   1),
+    n('w62_p',  'show_preview',    'Preview',  2),
+  ],
+  [
+    e('w62_s',   'out',        'w62_cot', 'in'),
+    e('w62_cot', 'conclusion', 'w62_p',   'in_input'),
+  ],
+  {
+    w62_s:   { startWorkflow: 'manual' },
+    w62_cot: {
+      systemPrompt: 'You are a careful reasoning assistant. Think through the problem step by step.',
+      question: 'A store sells apples for $0.75 each or 6 for $3.50. If I need 14 apples, what is the cheapest total price?',
+    },
+    w62_p: { label: 'Final conclusion' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 63 — Master Agent: orchestrate a swarm of specialists
+ * ──────────────────────────────────────────────────────────────── */
+const W63 = wf(
+  'wf_gs_63_master_agent',
+  '63 · Master Agent — Orchestrate Specialist Swarm',
+  'master_agent breaks a complex question into sub-tasks, spins up slave_agent workers, and merges the answers. Open the block to see the routing logic.',
+  [
+    n('w63_s',  'starter',      'Start',    0),
+    n('w63_ma', 'master_agent', 'Swarm',    1),
+    n('w63_p',  'show_preview', 'Preview',  2),
+  ],
+  [
+    e('w63_s',  'out',    'w63_ma', 'in'),
+    e('w63_ma', 'result', 'w63_p',  'in_input'),
+  ],
+  {
+    w63_s:  { startWorkflow: 'manual' },
+    w63_ma: {
+      systemPrompt: 'You coordinate a team of specialist agents to answer complex questions thoroughly.',
+      question: 'Compare the pros and cons of REST vs GraphQL for a public API, and give a final recommendation.',
+      workerCount: '2',
+      enableSynthesis: true,
+    },
+    w63_p: { label: 'Swarm answer' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 64 — Slave Agent: single specialist worker
+ * ──────────────────────────────────────────────────────────────── */
+const W64 = wf(
+  'wf_gs_64_slave_agent',
+  '64 · Slave Agent — Specialist Worker',
+  'slave_agent is a focused sub-agent that receives a single task and returns a structured answer. Useful standalone or when wired from master_agent outputs.',
+  [
+    n('w64_s',  'starter',     'Start',   0),
+    n('w64_sa', 'slave_agent', 'Worker',  1),
+    n('w64_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w64_s',  'out',    'w64_sa', 'in'),
+    e('w64_sa', 'answer', 'w64_p',  'in_input'),
+  ],
+  {
+    w64_s:  { startWorkflow: 'manual' },
+    w64_sa: {
+      role: 'You are an expert in cloud infrastructure. Answer concisely with cited best practices.',
+      task: 'What are the top 3 cost-optimisation strategies for AWS Lambda functions?',
+    },
+    w64_p: { label: 'Worker answer' },
+  },
+)
+
+/* ════════════════════════════════════════════════════════════════
+ * Block Debugger Walkthroughs (W65–W79)
+ * Right-click a block → Debug → set breakpoint → press canvas Run.
+ * ════════════════════════════════════════════════════════════════ */
+
+/* ────────────────────────────────────────────────────────────────
+ * 65 — Debug Walkthrough: Breakpoint on function block
+ * ──────────────────────────────────────────────────────────────── */
+const W65 = wf(
+  'wf_gs_65_debug_function',
+  '65 · Debugger Walkthrough — Function Block Breakpoint',
+  'A workflow designed to practice breakpoints on a function block (client.js / browser path). Right-click "Compute" → Debug → set breakpoint on any line → press Run.',
+  [
+    n('w61_s',  'starter',     'Start',   0),
+    n('w61_fn', 'function',    'Compute', 1),
+    n('w61_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w61_s',  'out',    'w61_fn', 'in'),
+    e('w61_fn', 'result', 'w61_p',  'in_input'),
+  ],
+  {
+    w61_s: { startWorkflow: 'manual' },
+    w61_fn: {
+      language: 'javascript',
+      code: `// Set a breakpoint on any line below and press canvas Run
+const base = 100
+const multiplier = 3
+const step1 = base * multiplier          // line 4 — pause here
+const step2 = step1 + base               // line 5
+const step3 = step2.toString(16)         // line 6 — hex
+const result = { base, multiplier, step1, step2, hex: step3 }
+return result`,
+    },
+    w61_p: { label: 'Computed result' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 66 — Debug Walkthrough: Conditional Breakpoint
+ * ──────────────────────────────────────────────────────────────── */
+const W66 = wf(
+  'wf_gs_66_debug_conditional',
+  '66 · Debugger Walkthrough — Conditional Breakpoint',
+  'Right-click a line number → Add Conditional Breakpoint → enter "i > 2". Only pauses when the condition is true.',
+  [
+    n('w62_s',  'starter',     'Start',   0),
+    n('w62_fn', 'function',    'Loop',    1),
+    n('w62_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w62_s',  'out',    'w62_fn', 'in'),
+    e('w62_fn', 'result', 'w62_p',  'in_input'),
+  ],
+  {
+    w62_s: { startWorkflow: 'manual' },
+    w62_fn: {
+      language: 'javascript',
+      code: `// Right-click any line number → Add Conditional Breakpoint
+// Try condition: result.length > 2  (only pauses after 3+ items built)
+const result = []
+for (let i = 0; i < 5; i++) {
+  const item = { index: i, square: i * i, cube: i * i * i }
+  result.push(item)
+}
+return result`,
+    },
+    w62_p: { label: 'Loop result' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 67 — Debug Walkthrough: Step Over vs Step Into
+ * ──────────────────────────────────────────────────────────────── */
+const W67 = wf(
+  'wf_gs_67_debug_step',
+  '67 · Debugger Walkthrough — Step Over / Step Into',
+  'Practice Step Over (F10) vs Step Into (F11). Set breakpoint at the top, then step through each assignment.',
+  [
+    n('w63_s',  'starter',     'Start',   0),
+    n('w63_fn', 'function',    'Steps',   1),
+    n('w63_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w63_s',  'out',    'w63_fn', 'in'),
+    e('w63_fn', 'result', 'w63_p',  'in_input'),
+  ],
+  {
+    w63_s: { startWorkflow: 'manual' },
+    w63_fn: {
+      language: 'javascript',
+      code: `// Breakpoint on line 2 — then use Step Over to advance line by line
+const raw    = 'hello world from CK8T'
+const words  = raw.split(' ')
+const upper  = words.map(w => w[0].toUpperCase() + w.slice(1))
+const joined = upper.join(' ')
+const length = joined.length
+return { raw, words, upper, joined, length }`,
+    },
+    w63_p: { label: 'Step-through result' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 68 — Debug Walkthrough: Extension.js Path (Storybook PDF)
+ * ──────────────────────────────────────────────────────────────── */
+const W68 = wf(
+  'wf_gs_68_debug_extension_js',
+  '68 · Debugger Walkthrough — extension.js Path (storybook_pdf)',
+  'Debug storybook_pdf running in the VS Code extension host. Right-click storybook_pdf → Debug → switch to extension.js tab → set breakpoint → press canvas Run.',
+  [
+    n('w64_s',   'starter',      'Start',  0),
+    n('w64_pdf', 'storybook_pdf','PDF',    1),
+    n('w64_p',   'show_preview', 'Preview',2),
+  ],
+  [
+    e('w64_s',   'out', 'w64_pdf', 'in'),
+    e('w64_pdf', 'pdf', 'w64_p',   'in_input'),
+  ],
+  {
+    w64_s:   { startWorkflow: 'manual' },
+    w64_pdf: {
+      title: 'Debug Test Story',
+      author: 'CK8T Debugger',
+      fontSize: '12',
+      pageSize: 'A4',
+      input: STORY_SAMPLE,
+    },
+    w64_p: { label: 'PDF output (via extension.js debug session)' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 69 — Debug Walkthrough: Watch Expressions
+ * ──────────────────────────────────────────────────────────────── */
+const W69 = wf(
+  'wf_gs_69_debug_watch',
+  '69 · Debugger Walkthrough — Watch Expressions',
+  'Set a breakpoint then add watch expressions like "data.length" or "data[0].price" in the Watch panel. Updates live as you step.',
+  [
+    n('w65_s',  'starter',     'Start',   0),
+    n('w65_fn', 'function',    'Data',    1),
+    n('w65_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w65_s',  'out',    'w65_fn', 'in'),
+    e('w65_fn', 'result', 'w65_p',  'in_input'),
+  ],
+  {
+    w65_s: { startWorkflow: 'manual' },
+    w65_fn: {
+      language: 'javascript',
+      code: `// Add watch: "data.length"  "data[0].price"  "total"
+const data = [
+  { id: 1, name: 'Apple',  price: 1.49, qty: 5  },
+  { id: 2, name: 'Banana', price: 0.29, qty: 12 },
+  { id: 3, name: 'Cherry', price: 3.99, qty: 2  },
+]
+const total   = data.reduce((s, i) => s + i.price * i.qty, 0)
+const sorted  = [...data].sort((a, b) => b.price - a.price)
+const cheapest = data.reduce((m, i) => i.price < m.price ? i : m)
+return { data, total: total.toFixed(2), sorted, cheapest }`,
+    },
+    w65_p: { label: 'Shopping cart result' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 70 — Debug: Agent Block — client.js breakpoints
+ * ──────────────────────────────────────────────────────────────── */
+const W70 = wf(
+  'wf_gs_70_debug_agent_extension',
+  '70 · Debugger Walkthrough — Agent Block (client.js)',
+  'Right-click the Agent block → Debug → switch to the "client.js" tab — set a breakpoint on the callLlm line and press Run. The agent runner executes in the browser, so Block Debugger breakpoints work normally here.',
+  [
+    n('w70_s',  'starter',     'Start',   0),
+    n('w70_a',  'agent',       'Ask LLM', 1),
+    n('w70_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w70_s', 'out',  'w70_a', 'in'),
+    e('w70_a', 'data', 'w70_p', 'in_input'),
+  ],
+  {
+    w70_s: { startWorkflow: 'manual' },
+    w70_a: {
+      systemPrompt: 'You are a concise assistant. Reply in one sentence.',
+      userPrompt: 'What is the capital of France?',
+    },
+    w70_p: { label: 'LLM answer' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 71 — Debug: Agent Block — inspect systemPrompt interpolation
+ * ──────────────────────────────────────────────────────────────── */
+const W71 = wf(
+  'wf_gs_71_debug_agent_prompt',
+  '71 · Debugger Walkthrough — Agent Prompt Interpolation',
+  'Right-click the Agent block → Debug → client.js tab. Set a breakpoint on the interpolateBag lines to inspect how {{input}} and {{variables}} are resolved before the LLM call. Watch the "bag" and "systemPrompt" variables.',
+  [
+    n('w71_s',  'starter',     'Start',   0),
+    n('w71_fn', 'function',    'Build',   1),
+    n('w71_a',  'agent',       'Ask LLM', 2),
+    n('w71_p',  'show_preview','Preview', 3),
+  ],
+  [
+    e('w71_s',  'out',    'w71_fn', 'in'),
+    e('w71_fn', 'result', 'w71_a',  'in'),
+    e('w71_a',  'data',   'w71_p',  'in_input'),
+  ],
+  {
+    w71_s:  { startWorkflow: 'manual' },
+    w71_fn: {
+      language: 'javascript',
+      code: `return { city: 'Tokyo', country: 'Japan', fact: 'population over 13 million' }`,
+    },
+    w71_a: {
+      systemPrompt: 'You answer questions about {{city}}, {{country}}.',
+      userPrompt: 'Give me one interesting fact beyond: {{fact}}',
+    },
+    w71_p: { label: 'Interpolated LLM answer' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 72 — Debug: Agent Block — inspect rawAgentResponse __meta
+ * ──────────────────────────────────────────────────────────────── */
+const W72 = wf(
+  'wf_gs_72_debug_agent_meta',
+  '72 · Debugger Walkthrough — Agent __meta Output',
+  'Right-click the Agent block → Debug → client.js tab. Set a breakpoint after the callLlm await to inspect res.output, res.ms, and the full __meta object returned by the runner.',
+  [
+    n('w72_s',  'starter',     'Start',   0),
+    n('w72_a',  'agent',       'Ask LLM', 1),
+    n('w72_fn', 'function',    'Inspect', 2),
+    n('w72_p',  'show_preview','Preview', 3),
+  ],
+  [
+    e('w72_s',  'out',    'w72_a',  'in'),
+    e('w72_a',  'data',   'w72_fn', 'in'),
+    e('w72_fn', 'result', 'w72_p',  'in_input'),
+  ],
+  {
+    w72_s: { startWorkflow: 'manual' },
+    w72_a: {
+      systemPrompt: 'You are a JSON API. Return only valid JSON with keys: answer and confidence (0-1).',
+      userPrompt: 'Is the Earth older than the Sun?',
+      responseFormat: '{"type":"object","properties":{"answer":{"type":"string"},"confidence":{"type":"number"}}}',
+    },
+    w72_fn: {
+      language: 'javascript',
+      code: `// input here is the agent's value.data
+const parsed = typeof input === 'string' ? JSON.parse(input) : input
+return { answer: parsed.answer, confidence: parsed.confidence, type: typeof parsed }`,
+    },
+    w72_p: { label: 'Structured output' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 73 — Debug: MCP Tool Call — inspect tool input/output
+ * ──────────────────────────────────────────────────────────────── */
+const W73 = wf(
+  'wf_gs_73_debug_mcp_tool',
+  '73 · Debugger Walkthrough — MCP Tool Call',
+  'MCP blocks run in the browser via a bridge. Right-click an MCP block → Debug → switch to the client.js tab → set a breakpoint on the callTool line to inspect the params object and raw tool response.',
+  [
+    n('w73_s',  'starter',     'Start',   0),
+    n('w73_fn', 'function',    'Prepare', 1),
+    n('w73_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w73_s',  'out',    'w73_fn', 'in'),
+    e('w73_fn', 'result', 'w73_p',  'in_input'),
+  ],
+  {
+    w73_s:  { startWorkflow: 'manual' },
+    w73_fn: {
+      language: 'javascript',
+      code: `// Simulates what the MCP block receives as its tool call response.
+// Replace this with an actual MCP block once your MCP server is connected.
+// Right-click the MCP block → Debug → client.js tab → breakpoint on the callTool line.
+const simulatedToolResponse = {
+  tool: 'read_file',
+  params: { path: '/workspace/test.json' },
+  result: { content: '{"hello":"world"}', mimeType: 'application/json' },
+  durationMs: 42,
+}
+return simulatedToolResponse`,
+    },
+    w73_p: { label: 'MCP tool response shape' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 74 — Debug: AI Classifier — inspect confidence scores
+ * ──────────────────────────────────────────────────────────────── */
+const W74 = wf(
+  'wf_gs_74_debug_classifier',
+  '74 · Debugger Walkthrough — AI Classifier Confidence',
+  'Right-click AI Classifier → Debug → switch to the client.js tab. Set a breakpoint on the JSON.parse line to inspect the raw LLM JSON before category and confidence are extracted. Watch "parsed" in the Watch panel.',
+  [
+    n('w74_s',  'starter',       'Start',    0),
+    n('w74_c',  'ai_classifier', 'Classify', 1),
+    n('w74_fn', 'function',      'Inspect',  2),
+    n('w74_p',  'show_preview',  'Preview',  3),
+  ],
+  [
+    e('w74_s',  'out',        'w74_c',  'in'),
+    e('w74_c',  'confidence', 'w74_fn', 'in'),
+    e('w74_fn', 'result',     'w74_p',  'in_input'),
+  ],
+  {
+    w74_s: { startWorkflow: 'manual' },
+    w74_c: {
+      systemPrompt: 'Classify strictly into one provided category.',
+      text: 'My internet is down and I cannot load any websites.',
+      categories: 'billing\nnetwork_outage\npassword_reset\ngeneral',
+      outputMode: 'category',
+    },
+    w74_fn: {
+      language: 'javascript',
+      code: `// input is the confidence score (0-1) from ai_classifier
+const pct = (Number(input) * 100).toFixed(1)
+return { confidence: input, display: pct + '%', strong: Number(input) > 0.8 }`,
+    },
+    w74_p: { label: 'Classifier confidence' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 75 — Debug: Chain of Thought — inspect reasoning steps
+ * ──────────────────────────────────────────────────────────────── */
+const W75 = wf(
+  'wf_gs_75_debug_cot',
+  '75 · Debugger Walkthrough — Chain of Thought Steps',
+  'chain_of_thought returns both "reasoning_steps" and "conclusion". Right-click Chain of Thought → Debug → switch to the client.js tab → set a breakpoint to inspect the full steps array before conclusion is extracted. Watch panel: "result.reasoning_steps.length".',
+  [
+    n('w75_s',   'starter',         'Start',   0),
+    n('w75_cot', 'chain_of_thought','Reason',  1),
+    n('w75_fn',  'function',        'Inspect', 2),
+    n('w75_p',   'show_preview',    'Preview', 3),
+  ],
+  [
+    e('w75_s',   'out',             'w75_cot', 'in'),
+    e('w75_cot', 'reasoning_steps', 'w75_fn',  'in'),
+    e('w75_fn',  'result',          'w75_p',   'in_input'),
+  ],
+  {
+    w75_s:   { startWorkflow: 'manual' },
+    w75_cot: {
+      systemPrompt: 'You reason step by step and always show your working.',
+      question: 'If a train travels 300km in 2.5 hours and stops for 15 minutes, what is its average moving speed?',
+    },
+    w75_fn: {
+      language: 'javascript',
+      code: `// input is reasoning_steps array from chain_of_thought
+const steps = Array.isArray(input) ? input : [input]
+return { stepCount: steps.length, steps, firstStep: steps[0], lastStep: steps[steps.length - 1] }`,
+    },
+    w75_p: { label: 'Reasoning steps' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 76 — Debug: Function Block — error thrown, inspect stack
+ * ──────────────────────────────────────────────────────────────── */
+const W76 = wf(
+  'wf_gs_76_debug_error',
+  '76 · Debugger Walkthrough — Caught Error Inspection',
+  'Enable "Pause on exceptions" in the debugger toolbar. This function throws intentionally. The debugger pauses at the throw site so you can inspect the call stack and local variables.',
+  [
+    n('w76_s',  'starter',     'Start',   0),
+    n('w76_fn', 'function',    'Risky',   1),
+    n('w76_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w76_s',  'out',    'w76_fn', 'in'),
+    e('w76_fn', 'result', 'w76_p',  'in_input'),
+  ],
+  {
+    w76_s: { startWorkflow: 'manual' },
+    w76_fn: {
+      language: 'javascript',
+      code: `// Enable "Pause on exceptions" in the debug toolbar — click the ⊘ icon
+function parseJson(raw) {
+  const parsed = JSON.parse(raw)   // breakpoint here
+  return parsed.value * 2
+}
+const goodData = '{"value": 21}'
+const badData  = 'not valid json'
+const r1 = parseJson(goodData)
+const r2 = parseJson(badData)      // throws here — debugger will pause
+return { r1, r2 }`,
+    },
+    w76_p: { label: 'Should not reach this' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 77 — Debug: Multi-block pipeline — trace data across blocks
+ * ──────────────────────────────────────────────────────────────── */
+const W77 = wf(
+  'wf_gs_77_debug_pipeline',
+  '77 · Debugger Walkthrough — Multi-Block Pipeline Trace',
+  'Enable debug mode on ALL three function blocks. Run the workflow and switch between Block Debug tabs to see how the data transforms at each stage. Compare input/output in the Block Debug panel.',
+  [
+    n('w77_s',   'starter',     'Start',    0),
+    n('w77_fn1', 'function',    'Fetch',    1),
+    n('w77_fn2', 'function',    'Filter',   2),
+    n('w77_fn3', 'function',    'Format',   3),
+    n('w77_p',   'show_preview','Preview',  4),
+  ],
+  [
+    e('w77_s',   'out',    'w77_fn1', 'in'),
+    e('w77_fn1', 'result', 'w77_fn2', 'in'),
+    e('w77_fn2', 'result', 'w77_fn3', 'in'),
+    e('w77_fn3', 'result', 'w77_p',   'in_input'),
+  ],
+  {
+    w77_s:   { startWorkflow: 'manual' },
+    w77_fn1: {
+      language: 'javascript',
+      code: `// Stage 1 — simulate fetched records (right-click → Debug this block)
+return [
+  { id: 1, name: 'Alice',  score: 87, active: true  },
+  { id: 2, name: 'Bob',    score: 42, active: false },
+  { id: 3, name: 'Carol',  score: 95, active: true  },
+  { id: 4, name: 'Dave',   score: 61, active: true  },
+  { id: 5, name: 'Eve',    score: 33, active: false },
+]`,
+    },
+    w77_fn2: {
+      language: 'javascript',
+      code: `// Stage 2 — filter active users with score >= 60
+const rows = Array.isArray(input) ? input : []
+return rows.filter(r => r.active && r.score >= 60)`,
+    },
+    w77_fn3: {
+      language: 'javascript',
+      code: `// Stage 3 — format for display
+const rows = Array.isArray(input) ? input : []
+return rows.map(r => ({ label: r.name, badge: r.score + ' pts' }))`,
+    },
+    w77_p: { label: 'Formatted leaderboard' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 78 — Debug: Agent + Function — inspect LLM output before parse
+ * ──────────────────────────────────────────────────────────────── */
+const W78 = wf(
+  'wf_gs_78_debug_agent_parse',
+  '78 · Debugger Walkthrough — Agent Output Before JSON Parse',
+  'The Agent block returns value.data as a string when using JSON response format. Set a breakpoint in the downstream Function block on the JSON.parse line to inspect the raw string before it is parsed.',
+  [
+    n('w78_s',  'starter',     'Start',   0),
+    n('w78_a',  'agent',       'Ask LLM', 1),
+    n('w78_fn', 'function',    'Parse',   2),
+    n('w78_p',  'show_preview','Preview', 3),
+  ],
+  [
+    e('w78_s',  'out',   'w78_a',  'in'),
+    e('w78_a',  'value', 'w78_fn', 'in'),
+    e('w78_fn', 'result','w78_p',  'in_input'),
+  ],
+  {
+    w78_s: { startWorkflow: 'manual' },
+    w78_a: {
+      systemPrompt: 'Return ONLY a JSON object with keys: title (string), year (number), genre (string).',
+      userPrompt: 'Give me details for the movie Inception.',
+    },
+    w78_fn: {
+      language: 'javascript',
+      code: `// Set breakpoint on next line — inspect raw "input" string in Variables panel
+const raw = typeof input === 'object' ? input?.data ?? JSON.stringify(input) : String(input)
+const movie = JSON.parse(raw)   // breakpoint: watch "raw" before parse
+return { title: movie.title, year: movie.year, genre: movie.genre, rawLength: raw.length }`,
+    },
+    w78_p: { label: 'Parsed movie data' },
+  },
+)
+
+/* ────────────────────────────────────────────────────────────────
+ * 79 — Debug: Console logs in function block
+ * ──────────────────────────────────────────────────────────────── */
+const W79 = wf(
+  'wf_gs_79_debug_console',
+  '79 · Debugger Walkthrough — Console Logs in Block Debug',
+  'console.log / warn / error calls inside a function block are captured in the Block Debug panel under "Console". Enable debug mode, run the workflow, then open Block Debug to see the captured logs with timestamps.',
+  [
+    n('w79_s',  'starter',     'Start',   0),
+    n('w79_fn', 'function',    'Noisy',   1),
+    n('w79_p',  'show_preview','Preview', 2),
+  ],
+  [
+    e('w79_s',  'out',    'w79_fn', 'in'),
+    e('w79_fn', 'result', 'w79_p',  'in_input'),
+  ],
+  {
+    w79_s: { startWorkflow: 'manual' },
+    w79_fn: {
+      language: 'javascript',
+      code: `// All these logs appear in Block Debug → Console tab
+console.log('Block started — input type:', typeof input)
+const items = ['apple', 'banana', 'cherry', 'date']
+console.info('Processing', items.length, 'items')
+const result = items.map((item, i) => {
+  console.log('  item', i, '→', item.toUpperCase())
+  return { index: i, original: item, upper: item.toUpperCase(), length: item.length }
+})
+const longest = result.reduce((m, i) => i.length > m.length ? i : m)
+console.warn('Longest item is', longest.original, 'with', longest.length, 'chars')
+return { items: result, longest }`,
+    },
+    w79_p: { label: 'Logged result' },
+  },
+)
+
 export const GETTING_STARTED_WORKFLOWS = [
   W01, W02, W03, W04, W05, W06, W07, W08, W09, W10,
   W11, W12, W13, W14, W15, W16, W17, W18, W19, W20,
   W21, W22, W23, W24, W25, W26, W27, W28, W29, W30,
   W31, W32, W33, W34, W35, W36, W37, W38, W39, W40,
   W41, W42, W43, W44, W45,
+  W46, W47, W48, W49, W50,
+  W51, W52, W53, W54, W55,
+  W56, W57, W58, W59, W60,
+  W61, W62, W63, W64,
+  W65, W66, W67, W68, W69,
+  W70, W71, W72, W73, W74,
+  W75, W76, W77, W78, W79,
 ]
 
 /** IDs of all getting-started workflows (for restore / re-seed). */

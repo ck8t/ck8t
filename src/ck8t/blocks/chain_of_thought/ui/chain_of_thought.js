@@ -12,7 +12,7 @@
  *   confidence       — number    — 0–1 self-assessed confidence
  *   full_response    — json      — raw LLM JSON for debugging
  */
-import { AgentIcon } from '../../../components/icons'
+import { ChainOfThoughtIcon } from '../../../components/icons'
 import { getModelOptions, getDefaultModel, getProviderCredentialSubBlocks } from '../../utils'
 import { defineCk8tBlock } from '../../ck8t-block-base.js'
 
@@ -32,7 +32,7 @@ export const ChainOfThoughtBlock = defineCk8tBlock({
   `,
   category: 'blocks',
   bgColor: '#7C3AED',
-  icon: AgentIcon,
+  icon: ChainOfThoughtIcon,
   tags: ['llm', 'reasoning', 'chain-of-thought', 'agentic'],
 
   subBlocks: [

@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
 import sensible from '@fastify/sensible'
+import websocket from '@fastify/websocket'
 
 import { config } from './config.js'
 import agentRoutes from './routes/agent.js'
@@ -12,6 +13,7 @@ import healthRoutes from './routes/health.js'
 import deployRoutes from './routes/deploy.js'
 import providerRoutes from './routes/provider.js'
 import blockManagerRoutes from './routes/block-manager.js'
+import debugWsRoutes from './routes/debug-ws.js'
 import { loadServerRunners } from './services/block-manager.js'
 
 async function buildServer(): Promise<FastifyInstance> {
@@ -27,6 +29,7 @@ async function buildServer(): Promise<FastifyInstance> {
   // -- Plugins --
   await app.register(cors, { origin: true })
   await app.register(sensible)
+  await app.register(websocket)
 
   // -- Content-type parser (10 MB limit) --
   app.addContentTypeParser(
@@ -50,6 +53,7 @@ async function buildServer(): Promise<FastifyInstance> {
     await api.register(providerRoutes)
     await api.register(deployRoutes)
     await api.register(blockManagerRoutes)
+    await api.register(debugWsRoutes)
   }, { prefix: '/api/v1' })
 
   // Health check stays at root

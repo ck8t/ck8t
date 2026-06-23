@@ -220,6 +220,43 @@ export function getServerRunnerPath(id: string, manifest: BlockManifest): string
   return fs.existsSync(p) ? p : null;
 }
 
+/**
+ * Resolve a community block's server.js raw source + absolute path by scanning
+ * the blocks dir for the manifest declaring this blockType. Used by the "Test on
+ * Server" debug-ws route to re-instrument the file with breakpoints — independent
+ * of customServerBlockRunners, which only retains the already-bound run() function.
+ */
+export function resolveServerRunnerSource(blockType: string): { source: string; filePath: string } | null {
+  const dir = getBlocksDir();
+  if (!fs.existsSync(dir)) return null;
+
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+
+    const manifestPath = path.join(dir, entry.name, 'ck8t-block.json');
+    if (!fs.existsSync(manifestPath)) continue;
+
+    let manifest: BlockManifest;
+    try {
+      manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as BlockManifest;
+    } catch {
+      continue;
+    }
+
+    const hasType = (manifest.blocks ?? []).some((b) => b.type === blockType);
+    if (!hasType) continue;
+
+    const runnerRelPath = manifest.runners?.server;
+    if (!runnerRelPath) return null;
+
+    const filePath = path.join(dir, entry.name, runnerRelPath);
+    if (!fs.existsSync(filePath)) return null;
+
+    return { source: fs.readFileSync(filePath, 'utf-8'), filePath };
+  }
+  return null;
+}
+
 /** Populated by loadServerRunners() — the graph-runner reads this map. */
 export const customServerBlockRunners = new Map<string, (opts: unknown) => Promise<unknown>>();
 

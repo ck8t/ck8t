@@ -1,8 +1,8 @@
 {
   "id": "chain_of_thought",
   "name": "Chain Of Thought",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
   "blocks": [{ "type": "chain_of_thought", "ui": "ui/chain_of_thought.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

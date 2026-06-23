@@ -1,1 +1,6 @@
-export function run({ input }) { return input }
+export default [
+  {
+    type: 'show_preview',
+    run({ input }) { return input },
+  },
+]

@@ -13,7 +13,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspaceStore } from '../stores/workspace-store'
 import { useTabsStore, agentTabId, skillTabId, teamTabId, workflowTabId } from '../stores/tabs-store'
+import { useBlockDebuggerStore } from '../debug/block-debugger-store'
 import BlockPalette from './BlockPalette'
+import { getAllBlocks } from '../blocks/registry'
 import { ManagerIcon } from '../components/BlockManager'
 import ContextMenu from './ContextMenu'
 import ConfirmModal from '../components/ConfirmModal'
@@ -23,6 +25,8 @@ import StyledSelect from '../components/StyledSelect'
 import { pickAndParseWorkflowJSON } from '../utils/import-workflow'
 import { flushSnapshot } from '../stores/snapshot'
 import { useUiStateStore } from '../stores/ui-state-store'
+import { useNavSignals } from '../stores/nav-signals'
+import { GETTING_STARTED_FOLDER_ID } from '../stores/getting-started-workflows'
 import {
   WorkflowsIcon,
   TeamsIcon,
@@ -32,12 +36,18 @@ import {
   PanelLeftIcon,
   PlusIcon,
   TrashIcon,
-  ChevronRightIcon,
   FolderIcon,
+  MoreVerticalIcon,
   LinkIcon,
   SettingsIcon,
 } from '../components/icons'
 import { BookIcon } from '../tabs/WikiGuide'
+import {
+  FolderView, ContextMenuView,
+  ExternalLinkIcon, DuplicateIcon, FolderTransferIcon, FolderIcon as DuiFolderIcon,
+  TrashIcon as DuiTrashIcon, FilePlusIcon as DuiFilePlusIcon, FolderPlusIcon as DuiFolderPlusIcon,
+  BugIcon, ChevronRightIcon,
+} from '@salilvnair/dui'
 
 function ImportIcon({ className }) {
   return (
@@ -79,6 +89,10 @@ export default function SideNav() {
   const openWiki = useTabsStore((s) => s.openWiki)
   const openSettings = useTabsStore((s) => s.openSettings)
   const openManager = useTabsStore((s) => s.openManager)
+  const openDebugger = useTabsStore((s) => s.openDebugger)
+  const activeTabId = useTabsStore((s) => s.activeId)
+  const debugBreakpoints = useBlockDebuggerStore((s) => s.breakpoints)
+  const hasBreakpoints = Object.values(debugBreakpoints).some(lines => lines.length > 0)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
   const teams = useWorkspaceStore((s) => s.teams)
   const workflowFolders = useWorkspaceStore((s) => s.workflowFolders)
@@ -197,6 +211,23 @@ export default function SideNav() {
           <span className="bs-rail-label">Manager</span>
         </button>
         <button
+          className={`bs-rail-btn ${activeTabId === 'debugger' ? 'is-active' : ''}`}
+          onClick={() => openDebugger()}
+          title="Debugger"
+          style={{ position: 'relative' }}
+        >
+          <BugIcon className="bs-rail-ico" />
+          <span className="bs-rail-label">Debugger</span>
+          {hasBreakpoints && (
+            <span style={{
+              position: 'absolute', top: 4, right: 4,
+              width: 6, height: 6, borderRadius: '50%',
+              background: 'var(--color-error, #ef4444)',
+              border: '1px solid var(--color-panel, #1e1e1e)',
+            }} />
+          )}
+        </button>
+        <button
           className="bs-rail-btn"
           onClick={() => openWiki()}
           title="Wiki — CK8T — Agent Builder Studio Guide"
@@ -228,6 +259,17 @@ export default function SideNav() {
       <section className="bs-pane" aria-hidden={!open}>
         <header className="bs-pane-head">
           <h2 className="bs-pane-title">{panel?.label}</h2>
+          {activeTab === 'blocks' && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, lineHeight: 1,
+              padding: '2px 6px', borderRadius: 10,
+              background: 'color-mix(in srgb, var(--color-primary) 15%, transparent)',
+              color: 'var(--color-primary)',
+              letterSpacing: '0.02em', flexShrink: 0,
+            }}>
+              {getAllBlocks().length}
+            </span>
+          )}
         </header>
         <div className="bs-pane-body">
           {activeTab === 'workflows' && <WorkflowsPanel />}
@@ -283,242 +325,369 @@ export default function SideNav() {
  * Sections
  * ====================================================================== */
 
+// ─── Folder colors ────────────────────────────────────────────────────────────
+const FOLDER_COLORS = [
+  '#6366f1', '#8b5cf6', '#ec4899', '#f59e0b',
+  '#10b981', '#0ea5e9', '#f97316', '#14b8a6',
+]
+function randomFolderColor() {
+  return FOLDER_COLORS[Math.floor(Math.random() * FOLDER_COLORS.length)]
+}
+
+// ─── WorkflowItem ─────────────────────────────────────────────────────────────
+// Defined at module level so React doesn't remount it on every WorkflowsPanel render.
+function WorkflowItem({ wf, depth = 0, isActive, onOpen, onRenameCommit, onMenu }) {
+  const [editing, setEditing] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const color = wf.color || entityColor(wf.id)
+  const dashIdx = wf.name.indexOf(' — ')
+  const display = dashIdx === -1 ? wf.name : wf.name.slice(0, dashIdx)
+  const chip = dashIdx === -1 ? null : wf.name.slice(dashIdx + 3)
+  const pl = 8 + (depth + 1) * 12
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        paddingTop: 5, paddingBottom: 5, paddingLeft: pl, paddingRight: 8,
+        borderRadius: 6, cursor: 'pointer', fontSize: 12, userSelect: 'none',
+        background: isActive || hovered ? 'var(--color-surface-hover)' : 'transparent',
+        transition: 'background 100ms',
+        marginBottom: 2,
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => { if (!editing) onOpen() }}
+      onDoubleClick={(e) => { e.stopPropagation(); setEditing(true) }}
+      onContextMenu={(e) => { e.preventDefault(); onMenu(e) }}
+    >
+      {chip
+        ? (
+          <span style={{
+            fontSize: 9, fontWeight: 600, letterSpacing: '0.04em', flexShrink: 0,
+            padding: '1px 5px', borderRadius: 4, background: color + '33', color,
+          }}>
+            {chip}
+          </span>
+        )
+        : <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      }
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        {editing ? (
+          <input
+            autoFocus
+            style={{
+              width: '100%', background: 'var(--color-input-bg)', outline: 'none',
+              border: '1px solid var(--color-primary)', borderRadius: 4,
+              padding: '0 4px', fontSize: 12, color: 'var(--color-text-primary)',
+            }}
+            defaultValue={wf.name}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={(e) => { const v = e.target.value.trim() || wf.name; onRenameCommit(v); setEditing(false) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(false) }}
+          />
+        ) : (
+          <span style={{
+            display: 'block', color: 'var(--color-text-primary)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {display}
+          </span>
+        )}
+      </div>
+      <button
+        style={{
+          background: 'none', border: 'none', padding: '0 2px', flexShrink: 0,
+          display: 'flex', alignItems: 'center', cursor: 'pointer',
+          color: 'var(--color-text-muted)',
+          opacity: hovered || isActive ? 1 : 0, transition: 'opacity 150ms',
+        }}
+        title="More options"
+        onClick={(e) => { e.stopPropagation(); onMenu(e) }}
+      >
+        <MoreVerticalIcon style={{ width: 12, height: 12 }} />
+      </button>
+    </div>
+  )
+}
+
 function WorkflowsPanel() {
-  const workflows = useWorkspaceStore((s) => s.workflows)
-  const workflowFolders = useWorkspaceStore((s) => s.workflowFolders)
-  const activeId = useWorkspaceStore((s) => s.activeWorkflowId)
-  const teams = useWorkspaceStore((s) => s.teams)
-  const createWorkflow = useWorkspaceStore((s) => s.createWorkflow)
-  const deleteWorkflow = useWorkspaceStore((s) => s.deleteWorkflow)
-  const renameWorkflow = useWorkspaceStore((s) => s.renameWorkflow)
-  const duplicateWorkflow = useWorkspaceStore((s) => s.duplicateWorkflow)
-  const createWorkflowFolder = useWorkspaceStore((s) => s.createWorkflowFolder)
-  const renameWorkflowFolder = useWorkspaceStore((s) => s.renameWorkflowFolder)
-  const deleteWorkflowFolder = useWorkspaceStore((s) => s.deleteWorkflowFolder)
+  const workflows          = useWorkspaceStore((s) => s.workflows)
+  const workflowFolders    = useWorkspaceStore((s) => s.workflowFolders)
+  const activeId           = useWorkspaceStore((s) => s.activeWorkflowId)
+  const teams              = useWorkspaceStore((s) => s.teams)
+  const createWorkflow     = useWorkspaceStore((s) => s.createWorkflow)
+  const deleteWorkflow     = useWorkspaceStore((s) => s.deleteWorkflow)
+  const renameWorkflow     = useWorkspaceStore((s) => s.renameWorkflow)
+  const duplicateWorkflow  = useWorkspaceStore((s) => s.duplicateWorkflow)
+  const createWorkflowFolder  = useWorkspaceStore((s) => s.createWorkflowFolder)
+  const renameWorkflowFolder  = useWorkspaceStore((s) => s.renameWorkflowFolder)
+  const deleteWorkflowFolder  = useWorkspaceStore((s) => s.deleteWorkflowFolder)
+  const moveFolder            = useWorkspaceStore((s) => s.moveFolder)
+  const moveWorkflow          = useWorkspaceStore((s) => s.moveWorkflow)
+  const reorderWorkflowFolders = useWorkspaceStore((s) => s.reorderWorkflowFolders)
+  const reorderWorkflows       = useWorkspaceStore((s) => s.reorderWorkflows)
   const openWorkflowTab = useTabsStore((s) => s.openWorkflowTab)
-  const renameTab = useTabsStore((s) => s.renameTab)
-  const closeTab = useTabsStore((s) => s.closeTab)
-  const [menu, setMenu] = useCtxMenu()
-  const [editing, setEditing] = useState(null) // { kind: 'workflow'|'folder', id }
-  const [expanded, setExpanded] = useState(() => new Set(workflowFolders.map((f) => f.id)))
-  const [newOpen, setNewOpen] = useState(false)
+  const openSettings    = useTabsStore((s) => s.openSettings)
+  const renameTab       = useTabsStore((s) => s.renameTab)
+  const closeTab        = useTabsStore((s) => s.closeTab)
+  const setGsTarget     = useNavSignals((s) => s.setGsTarget)
+
+  const [wfMenu, setWfMenu]           = useState(null)
+  const [expandedIds, setExpandedIds] = useState(() => new Set(workflowFolders.map((f) => f.id)))
+  const [newOpen, setNewOpen]         = useState(false)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
-  const [pendingDelete, setPendingDelete] = useState(null) // { kind: 'workflow'|'folder', id, name }
+  const [newFolderParentId, setNewFolderParentId] = useState(null)
+  const [pendingDelete, setPendingDelete] = useState(null)
   const [defaultFolderId, setDefaultFolderId] = useState(null)
+  // Root-workflow local DnD (reorder among root items only)
+  const [rootDragId, setRootDragId]       = useState(null)
+  const [rootDropTarget, setRootDropTarget] = useState(null)
 
-  function toggleFolder(id) {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
-  }
+  const rootWorkflows = useMemo(() => workflows.filter((w) => !w.folderId), [workflows])
 
-  function wfTeamNames(wf) {
-    const ids = wf.teamIds || (wf.teamId ? [wf.teamId] : [])
-    return ids.map((id) => teams.find((t) => t.id === id)?.name).filter(Boolean).join(', ') || '—'
-  }
+  // Build FolderNode tree for DUI FolderView
+  const folderNodes = useMemo(() => {
+    function buildTree(parentId) {
+      return workflowFolders
+        .filter((f) => (f.parentFolderId || null) === parentId)
+        .map((f) => ({
+          id: f.id,
+          label: f.name,
+          data: { color: f.color || null },
+          children: buildTree(f.id),
+          items: workflows.filter((w) => w.folderId === f.id),
+        }))
+    }
+    return buildTree(null)
+  }, [workflowFolders, workflows])
 
-  // Group workflows by folderId
-  const byFolder = {}
-  const rootWorkflows = []
-  for (const wf of workflows) {
-    if (wf.folderId) {
-      if (!byFolder[wf.folderId]) byFolder[wf.folderId] = []
-      byFolder[wf.folderId].push(wf)
+  // ─── Folder move (FolderView onMove) ──────────────────────────────────────
+  function handleFolderMove(dragId, targetId, position) {
+    if (position === 'inside') {
+      moveFolder(dragId, targetId)
+      setExpandedIds((prev) => { const next = new Set(prev); next.add(targetId); return next })
     } else {
-      rootWorkflows.push(wf)
+      const targetFolder = workflowFolders.find((f) => f.id === targetId)
+      const newParent = targetFolder?.parentFolderId || null
+      const withoutDrag = workflowFolders.filter((f) => f.id !== dragId)
+      const draggedFolder = { ...workflowFolders.find((f) => f.id === dragId), parentFolderId: newParent }
+      const targetIdx = withoutDrag.findIndex((f) => f.id === targetId)
+      const insertIdx = position === 'before' ? targetIdx : targetIdx + 1
+      const reordered = [...withoutDrag]
+      reordered.splice(insertIdx, 0, draggedFolder)
+      reorderWorkflowFolders(reordered)
     }
   }
 
-  // Color for a workflow: use stored color first, fall back to deterministic hash
-  function wfColor(wf) { return wf.color || entityColor(wf.id) }
-
-  // Parse GS workflow name: "01 · Hello World — text_template" → { display: "01 · Hello World", chip: "text_template" }
-  function parseWfName(name) {
-    const dashIdx = name.indexOf(' — ')
-    if (dashIdx === -1) return { display: name, chip: null }
-    return { display: name.slice(0, dashIdx), chip: name.slice(dashIdx + 3) }
+  // ─── Workflow move (FolderView onItemMove) ─────────────────────────────────
+  function handleItemMove(itemId, targetId, targetKind, position) {
+    if (targetKind === 'node') {
+      moveWorkflow(itemId, targetId)
+    } else {
+      const targetWf = workflows.find((w) => w.id === targetId)
+      const newFolderId = targetWf?.folderId || null
+      const withoutDrag = workflows.filter((w) => w.id !== itemId)
+      const draggedWf = { ...workflows.find((w) => w.id === itemId), folderId: newFolderId }
+      const targetIdx = withoutDrag.findIndex((w) => w.id === targetId)
+      const insertIdx = position === 'before' ? targetIdx : targetIdx + 1
+      const reordered = [...withoutDrag]
+      reordered.splice(insertIdx, 0, draggedWf)
+      reorderWorkflows(reordered)
+    }
   }
 
-  function WorkflowRow({ wf }) {
-    const color = wfColor(wf)
-    const { display, chip } = parseWfName(wf.name)
-    const teams = wfTeamNames(wf)
-    return (
-      <li
-        className={`bs-wfcard ${wf.id === activeId ? 'is-active' : ''}`}
-        style={{ '--wfc': color }}
-        onClick={() => openWorkflowTab(wf.id, wf.name)}
-        onDoubleClick={(e) => { e.stopPropagation(); setEditing({ kind: 'workflow', id: wf.id }) }}
-        onContextMenu={(e) => {
-          e.preventDefault()
-          setMenu({
-            x: e.clientX, y: e.clientY,
-            items: [
-              { id: 'open', label: 'Open in Tab', icon: LinkIcon, onSelect: () => openWorkflowTab(wf.id, wf.name) },
-              { id: 'rename', label: 'Rename', onSelect: () => setEditing({ kind: 'workflow', id: wf.id }) },
-              { id: 'dup', label: 'Duplicate', onSelect: () => { const copy = duplicateWorkflow(wf.id); if (copy) openWorkflowTab(copy.id, copy.name) } },
-              { separator: true },
-              { id: 'del', label: 'Delete', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'workflow', id: wf.id, name: wf.name }) },
-            ],
-          })
-        }}
-      >
-        <div className="bs-wfcard-avatar">
-          <WorkflowsIcon style={{ width: 11, height: 11, color: '#fff', opacity: 0.92 }} />
-        </div>
-        <div className="bs-wfcard-body">
-          {editing?.kind === 'workflow' && editing.id === wf.id ? (
-            <input
-              autoFocus
-              className="bs-inline-edit"
-              defaultValue={wf.name}
-              onClick={(e) => e.stopPropagation()}
-              onBlur={(e) => { const v = e.target.value.trim() || wf.name; renameWorkflow(wf.id, v); renameTab(workflowTabId(wf.id), v); setEditing(null) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
-            />
-          ) : (
-            <>
-              <div className="bs-wfcard-name">{display}</div>
-              <div className="bs-wfcard-meta">
-                {chip && <span className="bs-wfcard-chip">{chip}</span>}
-                {!chip && teams !== '—' && <span className="bs-wfcard-chip">{teams}</span>}
-              </div>
-            </>
-          )}
-        </div>
-        <button
-          className="bs-wfcard-del"
-          onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'workflow', id: wf.id, name: wf.name }) }}
-          title="Delete workflow"
-        >
-          <TrashIcon className="bs-ico-xs" />
-        </button>
-      </li>
-    )
+  // ─── Move summary for confirm modal ───────────────────────────────────────
+  function getMoveSummary(dragId) {
+    function collectSubtreeIds(fId) {
+      const ids = [fId]
+      for (const f of workflowFolders) {
+        if ((f.parentFolderId || null) === fId) ids.push(...collectSubtreeIds(f.id))
+      }
+      return ids
+    }
+    const subtreeIds = collectSubtreeIds(dragId)
+    return [
+      ...workflowFolders.filter((f) => subtreeIds.includes(f.id) && f.id !== dragId).map((f) => ({ label: f.name, type: 'folder' })),
+      ...workflows.filter((w) => subtreeIds.includes(w.folderId)).map((w) => ({ label: w.name, type: 'item' })),
+    ]
   }
 
-  function FolderRow({ folder }) {
-    const isOpen = expanded.has(folder.id)
-    const folderWorkflows = byFolder[folder.id] || []
-    const isGS = folder.id === 'folder_getting_started'
-    return (
-      <li className="bs-tree" key={folder.id}>
-        <div
-          className={`bs-folder-row ${isGS ? 'bs-folder-row-gs' : ''}`}
-          onClick={() => toggleFolder(folder.id)}
-          onDoubleClick={(e) => { e.stopPropagation(); setEditing({ kind: 'folder', id: folder.id }) }}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            setMenu({
-              x: e.clientX, y: e.clientY,
-              items: [
-                { id: 'add', label: 'New workflow here', icon: PlusIcon, onSelect: () => { setDefaultFolderId(folder.id); setNewOpen(true) } },
-                { id: 'rename', label: 'Rename folder', onSelect: () => setEditing({ kind: 'folder', id: folder.id }) },
-                { separator: true },
-                { id: 'del', label: 'Delete folder', icon: TrashIcon, danger: true, onSelect: () => setPendingDelete({ kind: 'folder', id: folder.id, name: folder.name }) },
-              ],
-            })
-          }}
-        >
-          <ChevronRightIcon className={`bs-ico-xs bs-chevron ${isOpen ? 'is-open' : ''}`} />
-          <div className={`bs-folder-icon ${isGS ? 'bs-folder-icon-gs' : ''}`}>
-            <FolderIcon style={{ width: 11, height: 11 }} />
-          </div>
-          <div className="bs-folder-body">
-            {editing?.kind === 'folder' && editing.id === folder.id ? (
-              <input
-                autoFocus
-                className="bs-inline-edit"
-                defaultValue={folder.name}
-                onClick={(e) => e.stopPropagation()}
-                onBlur={(e) => { const v = e.target.value.trim() || folder.name; renameWorkflowFolder(folder.id, v); setEditing(null) }}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setEditing(null) }}
-              />
-            ) : (
-              <span className="bs-folder-name">{folder.name}</span>
-            )}
-          </div>
-          <span className={`bs-folder-badge ${isGS ? 'bs-folder-badge-gs' : ''}`}>{folderWorkflows.length}</span>
-          <button
-            className="bs-folder-del"
-            onClick={(e) => { e.stopPropagation(); setPendingDelete({ kind: 'folder', id: folder.id, name: folder.name }) }}
-            title="Delete folder"
-          >
-            <TrashIcon className="bs-ico-xs" />
-          </button>
-        </div>
-        {isOpen && (
-          <div className="bs-tree-children">
-            <ul className="bs-rows bs-rows-nested bs-rows-wf">
-              {folderWorkflows.map((wf) => <WorkflowRow key={wf.id} wf={wf} />)}
-              {folderWorkflows.length === 0 && (
-                <li className="bs-empty bs-empty-sm">
-                  <button className="bs-link" onClick={(e) => { e.stopPropagation(); setDefaultFolderId(folder.id); setNewOpen(true) }}>
-                    + Add workflow
-                  </button>
-                </li>
-              )}
-            </ul>
-          </div>
-        )}
-      </li>
-    )
+  // ─── Folder hover actions for FolderView ──────────────────────────────────
+  const folderActions = useMemo(() => [
+    {
+      id: 'subfolder',
+      icon: <DuiFolderPlusIcon size={12} />,
+      tooltip: 'New Sub-folder',
+      onClick: (node) => {
+        setExpandedIds((prev) => { const next = new Set(prev); next.add(node.id); return next })
+        setNewFolderParentId(node.id); setNewFolderOpen(true)
+      },
+    },
+    {
+      id: 'newwf',
+      icon: <DuiFilePlusIcon size={12} />,
+      tooltip: 'New Workflow',
+      onClick: (node) => { setDefaultFolderId(node.id); setNewOpen(true) },
+    },
+    {
+      id: 'more',
+      icon: <MoreVerticalIcon style={{ width: 12, height: 12 }} />,
+      tooltip: 'More options',
+      onClick: () => {},
+    },
+  ], [])
+
+  // ─── Folder context menu items (DUI ContextMenuItem format) ───────────────
+  function getFolderContextMenuItems(node) {
+    return [
+      { id: 'add',       label: 'New Workflow',   icon: <DuiFilePlusIcon   size={13} style={{ color: 'var(--color-primary)' }} />,         onClick: () => { setDefaultFolderId(node.id); setNewOpen(true) } },
+      { id: 'subfolder', label: 'New Sub-folder', icon: <DuiFolderPlusIcon size={13} style={{ color: 'var(--color-warning, #f59e0b)' }} />, onClick: () => {
+        setExpandedIds((prev) => { const next = new Set(prev); next.add(node.id); return next })
+        setNewFolderParentId(node.id); setNewFolderOpen(true)
+      } },
+      { id: 'sep1', label: '', separator: true },
+      { id: 'del', label: 'Delete Folder', danger: true, icon: <DuiTrashIcon size={13} />, onClick: () => setPendingDelete({ kind: 'folder', id: node.id, name: node.label }) },
+    ]
+  }
+
+  // ─── Workflow context menu items (DUI ContextMenuItem format) ──────────────
+  function wfMenuItems(wf) {
+    const isGsWf = wf.folderId === GETTING_STARTED_FOLDER_ID
+    return [
+      { id: 'open', label: 'Open in Tab', icon: <ExternalLinkIcon size={13} style={{ color: 'var(--color-info, #38bdf8)' }} />, onClick: () => openWorkflowTab(wf.id, wf.name) },
+      ...(isGsWf ? [
+        { id: 'docs', label: 'Read Docs', icon: <BookIcon style={{ width: 13, height: 13, color: '#a78bfa' }} />, onClick: () => { setGsTarget(wf.id); openSettings() } },
+      ] : []),
+      { id: 'dup',  label: 'Duplicate',   icon: <DuplicateIcon    size={13} style={{ color: '#8b5cf6' }} />,                    onClick: () => { const copy = duplicateWorkflow(wf.id); if (copy) openWorkflowTab(copy.id, copy.name) } },
+      ...(workflowFolders.length > 0 ? [{
+        id: 'move', label: 'Move to Folder', icon: <FolderTransferIcon size={13} style={{ color: 'var(--color-primary)' }} />, children: [
+          ...workflowFolders.map((f) => ({
+            id: `move-${f.id}`,
+            label: f.name,
+            icon: <DuiFolderIcon size={13} style={{ color: f.color || 'var(--color-primary)' }} />,
+            onClick: () => moveWorkflow(wf.id, f.id),
+          })),
+        ],
+      }] : []),
+      { id: 'sep1', label: '', separator: true },
+      { id: 'del',  label: 'Delete', danger: true, icon: <DuiTrashIcon size={13} />, onClick: () => setPendingDelete({ kind: 'workflow', id: wf.id, name: wf.name }) },
+    ]
+  }
+
+  // ─── Root-workflow DnD (reorder only, no cross-section drag) ──────────────
+  function handleRootDragOver(e, targetId) {
+    e.preventDefault()
+    if (!rootDragId || rootDragId === targetId) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    setRootDropTarget({ id: targetId, position: e.clientY - rect.top < rect.height * 0.5 ? 'before' : 'after' })
+  }
+  function handleRootDrop(e, targetId) {
+    e.preventDefault()
+    if (!rootDragId || !rootDropTarget || rootDragId === targetId) { setRootDragId(null); setRootDropTarget(null); return }
+    const withoutDrag = workflows.filter((w) => w.id !== rootDragId)
+    const draggedWf = { ...workflows.find((w) => w.id === rootDragId), folderId: null }
+    const targetIdx = withoutDrag.findIndex((w) => w.id === targetId)
+    const reordered = [...withoutDrag]
+    reordered.splice(rootDropTarget.position === 'before' ? targetIdx : targetIdx + 1, 0, draggedWf)
+    reorderWorkflows(reordered)
+    setRootDragId(null); setRootDropTarget(null)
   }
 
   return (
     <div className="bs-sec">
-      <div className="bs-sec-actions">
-        <button
-          className="bs-add-btn bs-add-btn-sm"
-          onClick={() => setNewFolderOpen(true)}
-          title="New folder"
-        >
-          <FolderIcon className="bs-ico-sm" />
-          <span>New folder</span>
-        </button>
-        <button
-          className="bs-add-btn"
-          onClick={() => { setDefaultFolderId(workflowFolders[0]?.id || null); setNewOpen(true) }}
-        >
-          <PlusIcon className="bs-ico-sm" />
-          <span>New workflow</span>
-        </button>
+      <div className="bs-wf-header">
+        <span className="bs-wf-header-label">Workflows</span>
+        <div className="bs-wf-header-actions">
+          <button className="bs-wf-header-btn" title="New folder" onClick={() => { setNewFolderParentId(null); setNewFolderOpen(true) }}>
+            <FolderIcon className="bs-ico-xs" />
+          </button>
+          <button className="bs-wf-header-btn" title="New workflow" onClick={() => { setDefaultFolderId(null); setNewOpen(true) }}>
+            <PlusIcon className="bs-ico-xs" />
+          </button>
+        </div>
       </div>
 
-      {newFolderOpen && (
-        <div className="bs-inline-form bs-inline-form-sm">
-          <input
-            autoFocus
-            className="bs-input"
-            placeholder="Folder name"
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newFolderName.trim()) {
-                createWorkflowFolder(newFolderName.trim())
-                setNewFolderName('')
-                setNewFolderOpen(false)
-              }
-              if (e.key === 'Escape') { setNewFolderName(''); setNewFolderOpen(false) }
+      <div className="bs-rows-wf">
+        {folderNodes.length > 0 && (
+          <FolderView
+            nodes={folderNodes}
+            accentColor="var(--color-primary, #6366f1)"
+            expandedIds={expandedIds}
+            onToggle={(id) => setExpandedIds((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })}
+            draggable
+            isDraggableNode={(node) => node.id !== 'folder_getting_started'}
+            onMove={handleFolderMove}
+            confirmFolderMove
+            getMoveSummary={getMoveSummary}
+            draggableItems
+            getItemId={(wf) => wf.id}
+            onItemMove={handleItemMove}
+            onRename={(id, name) => renameWorkflowFolder(id, name)}
+            folderActions={folderActions}
+            contextMenuItems={getFolderContextMenuItems}
+            inlineCreate={newFolderOpen ? { parentId: newFolderParentId } : null}
+            onInlineCreateCommit={(parentId, name) => {
+              const f = createWorkflowFolder(name, parentId, randomFolderColor())
+              setExpandedIds((prev) => { const next = new Set(prev); if (parentId) next.add(parentId); next.add(f.id); return next })
+              setNewFolderOpen(false); setNewFolderParentId(null)
             }}
-            onBlur={() => {
-              if (newFolderName.trim()) createWorkflowFolder(newFolderName.trim())
-              setNewFolderName('')
-              setNewFolderOpen(false)
-            }}
+            onInlineCreateCancel={() => { setNewFolderOpen(false); setNewFolderParentId(null) }}
+            renderItem={(wf, _node, depth) => (
+              <WorkflowItem
+                wf={wf}
+                depth={depth}
+                isActive={wf.id === activeId}
+                onOpen={() => openWorkflowTab(wf.id, wf.name)}
+                onRenameCommit={(name) => { renameWorkflow(wf.id, name); renameTab(workflowTabId(wf.id), name) }}
+                onMenu={(e) => setWfMenu({ x: e.clientX, y: e.clientY, wf })}
+              />
+            )}
           />
-        </div>
-      )}
+        )}
 
-      <ul className="bs-rows bs-rows-wf">
-        {workflowFolders.map((f) => <FolderRow key={f.id} folder={f} />)}
-        {rootWorkflows.map((wf) => <WorkflowRow key={wf.id} wf={wf} />)}
-        {workflows.length === 0 && <li className="bs-empty">No workflows yet.</li>}
-      </ul>
-      {menu}
+        {rootWorkflows.length > 0 && (
+          <ul className="bs-rows">
+            {rootWorkflows.map((wf) => {
+              const dt = rootDropTarget?.id === wf.id ? rootDropTarget : null
+              return (
+                <li
+                  key={wf.id}
+                  className={dt?.position === 'before' ? 'bs-drop-before' : dt?.position === 'after' ? 'bs-drop-after' : ''}
+                  draggable
+                  onDragStart={(e) => { setRootDragId(wf.id); e.dataTransfer.effectAllowed = 'move' }}
+                  onDragEnd={() => { setRootDragId(null); setRootDropTarget(null) }}
+                  onDragOver={(e) => handleRootDragOver(e, wf.id)}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setRootDropTarget(null) }}
+                  onDrop={(e) => handleRootDrop(e, wf.id)}
+                >
+                  <WorkflowItem
+                    wf={wf}
+                    depth={-1}
+                    isActive={wf.id === activeId}
+                    onOpen={() => openWorkflowTab(wf.id, wf.name)}
+                    onRenameCommit={(name) => { renameWorkflow(wf.id, name); renameTab(workflowTabId(wf.id), name) }}
+                    onMenu={(e) => setWfMenu({ x: e.clientX, y: e.clientY, wf })}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        )}
+
+        {workflows.length === 0 && workflowFolders.length === 0 && (
+          <div style={{ padding: '24px 12px', textAlign: 'center', fontSize: 12, color: 'var(--color-text-muted)' }}>
+            No workflows yet.
+          </div>
+        )}
+      </div>
+      <ContextMenuView
+        items={wfMenu ? wfMenuItems(wfMenu.wf) : []}
+        anchorEl={null}
+        open={!!wfMenu}
+        onClose={() => setWfMenu(null)}
+        position={wfMenu ? { x: wfMenu.x, y: wfMenu.y } : undefined}
+        rounded
+      />
 
       {newOpen && (
         <CreateWorkflowModal
@@ -539,13 +708,20 @@ function WorkflowsPanel() {
           title={pendingDelete.kind === 'folder' ? 'Delete folder?' : 'Delete workflow?'}
           message={
             pendingDelete.kind === 'folder'
-              ? `"${pendingDelete.name}" will be removed. Workflows inside will move to root (not deleted).`
-              : `"${pendingDelete.name}" and all its blocks will be removed. This cannot be undone.`
+              ? `"${pendingDelete.name}" and all workflows and sub-folders inside will be permanently deleted.`
+              : `"${pendingDelete.name}" and all its blocks will be permanently deleted. This cannot be undone.`
           }
           confirmLabel={pendingDelete.kind === 'folder' ? 'Delete folder' : 'Delete workflow'}
           onCancel={() => setPendingDelete(null)}
           onConfirm={() => {
             if (pendingDelete.kind === 'folder') {
+              function collectFolderIds(fId) {
+                const ids = [fId]
+                for (const f of workflowFolders) if ((f.parentFolderId || null) === fId) ids.push(...collectFolderIds(f.id))
+                return ids
+              }
+              const allIds = collectFolderIds(pendingDelete.id)
+              workflows.filter((w) => allIds.includes(w.folderId)).forEach((w) => closeTab(workflowTabId(w.id)))
               deleteWorkflowFolder(pendingDelete.id)
             } else {
               closeTab(workflowTabId(pendingDelete.id))

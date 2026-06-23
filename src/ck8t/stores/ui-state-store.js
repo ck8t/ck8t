@@ -23,6 +23,8 @@ export const UI_PANEL_DEFAULTS = {
   sideNavOpen: true,
   sideNavWidth: 288,
   sideNavTab:  'blocks',
+  // Auto-save
+  autoSaveInterval: 1000,
 }
 
 const isVsCode = typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension'

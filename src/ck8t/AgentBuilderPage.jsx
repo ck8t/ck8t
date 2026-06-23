@@ -30,7 +30,6 @@ import { logUiEvent } from './audit/ui-audit-store'
 import { flushSnapshot } from './stores/snapshot'
 import { useUiStateStore } from './stores/ui-state-store'
 import McpProgressOverlay from './components/McpProgressOverlay'
-import { BlockDebuggerPopup } from './debug/BlockDebuggerPopup'
 import './ck8t.css'
 
 const R_MIN = 280
@@ -50,6 +49,7 @@ export default function AgentBuilderPage() {
   const setLlmConfig = useLlmConfigStore((s) => s.setConfig)
   const [editingName, setEditingName] = useState(false)
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow)
+  const setCanvasDirty = useWorkflowStore((s) => s.setCanvasDirty)
   const nodes = useWorkflowStore((s) => s.nodes)
   const edges = useWorkflowStore((s) => s.edges)
   const subBlockValues = useWorkflowStore((s) => s.subBlockValues)
@@ -65,6 +65,7 @@ export default function AgentBuilderPage() {
   const runOpen    = useUiStateStore((s) => s.runOpen)
   const dockTab    = useUiStateStore((s) => s.dockTab)
   const setPanelState = useUiStateStore((s) => s.setPanelState)
+  const autoSaveInterval = useUiStateStore((s) => s.autoSaveInterval)
   const setROpen   = (v) => setPanelState({ rOpen:   typeof v === 'function' ? v(rOpen)   : v })
   const setRWidth  = (v) => setPanelState({ rWidth:  typeof v === 'function' ? v(rWidth)  : v })
   const setRunOpen = (v) => setPanelState({ runOpen: typeof v === 'function' ? v(runOpen) : v })
@@ -281,12 +282,14 @@ export default function AgentBuilderPage() {
     // Without this, switching tabs fires this effect with stale nodes/edges from
     // the previous workflow and corrupts the newly-activated one.
     if (loadedWorkflowIdRef.current !== activeWorkflowId) return
+    setCanvasDirty(true)
     clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
       saveWorkflow(activeWorkflowId, { nodes, edges, subBlockValues })
-    }, 400)
+      setCanvasDirty(false)
+    }, autoSaveInterval)
     return () => clearTimeout(autoSaveTimerRef.current)
-  }, [nodes, edges, subBlockValues, activeWorkflowId, saveWorkflow])
+  }, [nodes, edges, subBlockValues, activeWorkflowId, saveWorkflow, autoSaveInterval, setCanvasDirty])
 
   // Listen for context-menu action dispatches from Canvas
   useEffect(() => {
@@ -587,7 +590,6 @@ export default function AgentBuilderPage() {
       )}
 
       <McpProgressOverlay />
-      <BlockDebuggerPopup />
     </div>
   )
 }

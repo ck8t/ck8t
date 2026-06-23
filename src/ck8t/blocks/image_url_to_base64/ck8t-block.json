@@ -1,8 +1,8 @@
 {
   "id": "image_url_to_base64",
   "name": "Image Url To Base64",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
   "blocks": [{ "type": "image_url_to_base64", "ui": "ui/image_url_to_base64.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

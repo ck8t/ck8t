@@ -4,5 +4,5 @@
   "version": "1.0.0",
   "type": "core",
   "blocks": [{ "type": "agent", "ui": "ui/agent.js" }],
-  "runners": { "extension": "runners/extension.js" }
+  "runners": { "client": "runners/client.js", "extension": "runners/extension.js" }
 }

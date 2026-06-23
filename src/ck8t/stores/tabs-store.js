@@ -90,6 +90,20 @@ export const useTabsStore = create((set, get) => ({
     set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, title } : t)) }))
   },
 
+  /** Focus (or open) the singleton Debugger tab. */
+  openDebugger() {
+    const existing = get().tabs.find((t) => t.id === DEBUGGER_TAB_ID)
+    if (existing) { set({ activeId: DEBUGGER_TAB_ID }); return }
+    set((s) => ({
+      tabs: [...s.tabs, { id: DEBUGGER_TAB_ID, kind: 'debugger', title: 'Debugger' }],
+      activeId: DEBUGGER_TAB_ID,
+    }))
+  },
+
+  closeDebuggerTab() {
+    get().closeTab(DEBUGGER_TAB_ID)
+  },
+
   /** Focus (or open) the singleton Settings tab. */
   openSettings() {
     const existing = get().tabs.find((t) => t.id === SETTINGS_TAB_ID)
@@ -177,6 +191,7 @@ export const useTabsStore = create((set, get) => ({
 export const SETTINGS_TAB_ID = 'settings'
 export const WIKI_TAB_ID = 'wiki'
 export const MANAGER_TAB_ID = 'manager'
+export const DEBUGGER_TAB_ID = 'debugger'
 export function workflowTabId(wfId) { return `workflow:${wfId}` }
 export function workflowIdFromTab(tabId) { return tabId?.startsWith('workflow:') ? tabId.slice(9) : null }
 export function agentTabId(agentId) { return `agent:${agentId}` }

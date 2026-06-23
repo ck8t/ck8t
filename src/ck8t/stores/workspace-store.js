@@ -275,8 +275,8 @@ export const useWorkspaceStore = create()(
         },
 
         // ---------- Workflow Folders ----------
-        createWorkflowFolder(name) {
-          const folder = { id: `folder_${uuid()}`, name }
+        createWorkflowFolder(name, parentFolderId = null, color = null) {
+          const folder = { id: `folder_${uuid()}`, name, parentFolderId: parentFolderId || null, color: color || null }
           set((s) => ({ workflowFolders: [...s.workflowFolders, folder] }))
           return folder
         },
@@ -284,10 +284,37 @@ export const useWorkspaceStore = create()(
           set((s) => ({ workflowFolders: s.workflowFolders.map((f) => (f.id === id ? { ...f, name } : f)) }))
         },
         deleteWorkflowFolder(id) {
+          set((s) => {
+            // Recursively collect all descendant folder IDs
+            function collectIds(folderId, folders) {
+              const ids = [folderId]
+              for (const f of folders) {
+                if ((f.parentFolderId || null) === folderId) ids.push(...collectIds(f.id, folders))
+              }
+              return ids
+            }
+            const allIds = collectIds(id, s.workflowFolders)
+            return {
+              workflowFolders: s.workflowFolders.filter((f) => !allIds.includes(f.id)),
+              workflows: s.workflows.filter((w) => !allIds.includes(w.folderId)),
+            }
+          })
+        },
+        moveFolder(id, newParentFolderId) {
           set((s) => ({
-            workflowFolders: s.workflowFolders.filter((f) => f.id !== id),
-            workflows: s.workflows.map((w) => w.folderId === id ? { ...w, folderId: null } : w),
+            workflowFolders: s.workflowFolders.map((f) => f.id === id ? { ...f, parentFolderId: newParentFolderId || null } : f),
           }))
+        },
+        moveWorkflow(id, newFolderId) {
+          set((s) => ({
+            workflows: s.workflows.map((w) => w.id === id ? { ...w, folderId: newFolderId || null } : w),
+          }))
+        },
+        reorderWorkflowFolders(reordered) {
+          set(() => ({ workflowFolders: reordered }))
+        },
+        reorderWorkflows(reordered) {
+          set(() => ({ workflows: reordered }))
         },
 
         // ---------- Workflows ----------

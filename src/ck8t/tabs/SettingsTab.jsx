@@ -14,14 +14,18 @@ import McpServersPanel from './McpServersPanel'
 import AiProvidersPanel from './AiProvidersPanel'
 import { useLlmConfigStore } from '../stores/llm-config-store'
 import { useWorkspaceStore } from '../stores/workspace-store'
+import { useUiStateStore } from '../stores/ui-state-store'
 import { GETTING_STARTED_WORKFLOWS } from '../stores/getting-started-workflows'
 import { useWorkflowStore } from '../stores/workflow-store'
 import { useBrowserProvidersStore } from '../api/browser-providers-store'
 import { detectServer } from '../api/server-status'
 import StyledSelect from '../components/StyledSelect'
+import { SplitPanelView, SearchInputView, DurationInputView, TextInputView } from '@salilvnair/dui'
+import { useNavSignals } from '../stores/nav-signals'
 import {
   AUDIT_EVENT_DEFS, MODULE_ORDER,
   getAuditConfig, setAuditEventEnabled, isAuditEventEnabled, resetAuditConfig,
+  getRateConfig, setRateConfig,
   getUiAuditLog, clearUiAuditLog, subscribeUiAudit,
 } from '../audit/ui-audit-store'
 
@@ -205,6 +209,13 @@ export default function SettingsTab() {
   const isExtension = typeof window !== 'undefined' && window.__CK8T_MODE__ === 'vscode-extension'
   const visibleTabs = SETTINGS_TABS.filter(t => !t.extensionOnly || isExtension)
 
+  // When sidebar "Read Docs" fires a gsSelectId, jump to Getting Started
+  const gsSelectId   = useNavSignals((s) => s.gsSelectId)
+  const clearGsTarget = useNavSignals((s) => s.clearGsTarget)
+  useEffect(() => {
+    if (gsSelectId) setActiveSection('getting_started')
+  }, [gsSelectId])
+
   return (
     <div className="bs-settings-layout">
       {/* Left sidebar */}
@@ -234,7 +245,7 @@ export default function SettingsTab() {
         {activeSection === 'appconfig' && <AppConfigPanel />}
         {activeSection === 'audit' && <AiAuditSection />}
         {activeSection === 'devtools' && <DevToolsSection />}
-        {activeSection === 'getting_started' && <GettingStartedSection />}
+        {activeSection === 'getting_started' && <GettingStartedSection pendingSelectId={gsSelectId} onPendingConsumed={clearGsTarget} />}
       </div>
     </div>
   )
@@ -1228,6 +1239,11 @@ function AppConfigPanel() {
   const [auditSaving, setAuditSaving] = useState(false)
   const [auditSaved, setAuditSaved] = useState(false)
 
+  const autoSaveInterval = useUiStateStore((s) => s.autoSaveInterval)
+  const setPanelState = useUiStateStore((s) => s.setPanelState)
+  const [autoSaveInput, setAutoSaveInput] = useState(String(autoSaveInterval))
+  const [autoSaveSaved, setAutoSaveSaved] = useState(false)
+
   const BASE = (
     (typeof globalThis !== 'undefined' && globalThis.__CK8T_BRIDGE_BASE__) ||
     (typeof import.meta !== 'undefined' && import.meta.env?.VITE_CONVENGINE_BASE) ||
@@ -1245,6 +1261,14 @@ function AppConfigPanel() {
     navigator.clipboard?.writeText(text)
     setCopied(key)
     setTimeout(() => setCopied(''), 2000)
+  }
+
+  const saveAutoSaveInterval = () => {
+    const n = parseInt(autoSaveInput, 10)
+    if (!n || n < 200) return
+    setPanelState({ autoSaveInterval: n })
+    setAutoSaveSaved(true)
+    setTimeout(() => setAutoSaveSaved(false), 2000)
   }
 
   const saveAuditMax = async () => {
@@ -1350,6 +1374,39 @@ function AppConfigPanel() {
               </div>
               <div className="bs-appconfig-card-hint">
                 Maximum LLM audit entries to keep in SQLite (10–5000). Oldest entries are dropped when the limit is reached.
+              </div>
+            </div>
+          </div>
+
+          {/* Auto Save Interval */}
+          <div className="bs-appconfig-card">
+            <div className="bs-appconfig-card-icon">
+              <SaveShortcutIcon style={{ width: 20, height: 20, opacity: 0.8 }} />
+            </div>
+            <div className="bs-appconfig-card-body">
+              <div className="bs-appconfig-card-label">Auto Save Interval</div>
+              <div className="bs-appconfig-path-row" style={{ gap: 8 }}>
+                <input
+                  type="number"
+                  min="200"
+                  max="10000"
+                  step="100"
+                  className="bs-custom-provider-input"
+                  style={{ width: 100 }}
+                  value={autoSaveInput}
+                  onChange={(e) => setAutoSaveInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveAutoSaveInterval()}
+                />
+                <span style={{ fontSize: 11, color: 'var(--text-secondary, #94a3b8)' }}>ms</span>
+                <button
+                  className="bs-btn-sm bs-btn-success"
+                  onClick={saveAutoSaveInterval}
+                >
+                  {autoSaveSaved ? 'Saved!' : 'Save'}
+                </button>
+              </div>
+              <div className="bs-appconfig-card-hint">
+                Debounce delay before canvas changes are auto-saved (200–10000ms). Default 1000ms.
               </div>
             </div>
           </div>
@@ -1528,7 +1585,13 @@ function AiAuditSection() {
 
       {/* Toolbar */}
       <div className="bs-audit2-toolbar">
-        <input className="bs-audit2-search" placeholder="Filter by model, stage, prompt…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <SearchInputView
+          value={filter}
+          onChange={setFilter}
+          placeholder="Filter by model, stage, prompt…"
+          prefix={<SearchIcon width={13} height={13} />}
+          style={{ minWidth: 280, flex: 1, maxWidth: 440 }}
+        />
         <button className="bs-audit2-btn" onClick={load} disabled={loading}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           {loading ? 'Loading…' : 'Refresh'}
@@ -2041,6 +2104,15 @@ function UiAuditConfigTab() {
   const refresh = useCallback(() => setTick(t => t + 1), [])
   const [collapsed, setCollapsed] = useState(new Set())
 
+  // Rate-limit state — windowMs driven by DurationInputView (value in ms)
+  const [maxCount,  setMaxCount]  = useState(() => String(getRateConfig().maxCount))
+  const [windowMs,  setWindowMs]  = useState(() => getRateConfig().windowMs)
+
+  useEffect(() => {
+    const count = Math.max(1, parseInt(maxCount, 10) || 1)
+    setRateConfig({ maxCount: count, windowMs })
+  }, [maxCount, windowMs])
+
   const toggle = (id, enabled) => { setAuditEventEnabled(id, enabled); refresh() }
   const toggleModule = (module, enable) => {
     AUDIT_EVENT_DEFS.filter(d => d.module === module).forEach(d => setAuditEventEnabled(d.id, enable))
@@ -2058,6 +2130,29 @@ function UiAuditConfigTab() {
 
   return (
     <div className="bs-devtools-uicfg">
+      {/* Rate limit card */}
+      <div className="bs-uicfg-rate-card">
+        <div className="bs-uicfg-rate-label">Rate Limit <span className="bs-uicfg-rate-sublabel">— same event type only</span></div>
+        <div className="bs-uicfg-rate-row">
+          <span className="bs-uicfg-rate-hint">Max</span>
+          <TextInputView
+            type="number"
+            min="1"
+            value={maxCount}
+            onChange={(e) => setMaxCount(e.target.value)}
+            style={{ width: 64 }}
+          />
+          <span className="bs-uicfg-rate-hint">of the same event within</span>
+          <DurationInputView
+            value={windowMs}
+            onChange={setWindowMs}
+          />
+        </div>
+        <div className="bs-uicfg-rate-desc">
+          Each event type is counted independently — e.g. <code className="bs-uicfg-code">workflow.run</code> and <code className="bs-uicfg-code">canvas.block.add</code> each have their own counter.
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="bs-uicfg-toolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2383,7 +2478,7 @@ function gsColor(id) {
 }
 function parseGsName(name) {
   const dash = name.indexOf(' — ')
-  if (dash === -1) return { label: name, chip: null }
+  if (dash === -1) return { label: name, chip: null, num: '' }
   const part1 = name.slice(0, dash)
   const chip = name.slice(dash + 3)
   const dot = part1.indexOf(' · ')
@@ -2391,24 +2486,90 @@ function parseGsName(name) {
   const num = dot === -1 ? '' : part1.slice(0, dot)
   return { num, label, chip }
 }
+function parseWfNum(name) {
+  const m = name.match(/^(\d+)[\s·]/)
+  return m ? parseInt(m[1], 10) : 0
+}
+function getWfCategory(name) {
+  const n = parseWfNum(name)
+  if (n >= 65) return 'Debugger'
+  if (n >= 46) return 'Community'
+  return 'Core'
+}
+function getWfCategoryColor(name) {
+  const cat = getWfCategory(name)
+  if (cat === 'Debugger') return '#f59e0b'
+  if (cat === 'Community') return '#10b981'
+  return '#818cf8'
+}
+function getBlockTypes(wf) {
+  const seen = new Set()
+  const types = []
+  for (const node of (wf.nodes || [])) {
+    const bt = node.data?.blockType
+    if (bt && bt !== 'starter' && !seen.has(bt)) {
+      seen.add(bt)
+      types.push(bt)
+    }
+  }
+  return types
+}
 
-function GettingStartedSection() {
+const GS_CAT_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'core', label: 'Core Blocks' },
+  { id: 'community', label: 'Community' },
+  { id: 'debugger', label: 'Debugger' },
+]
+
+function GettingStartedSection({ pendingSelectId = null, onPendingConsumed } = {}) {
+  const total = GETTING_STARTED_WORKFLOWS.length
   const workflows = useWorkspaceStore((s) => s.workflows)
   const restoreGettingStarted = useWorkspaceStore((s) => s.restoreGettingStarted)
   const [confirming, setConfirming] = useState(false)
   const [restored, setRestored] = useState(false)
   const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('all')
+  const [selected, setSelected] = useState(null)
+
+  // Auto-select workflow when navigated via "Read Docs"
+  useEffect(() => {
+    if (!pendingSelectId) return
+    const wf = GETTING_STARTED_WORKFLOWS.find((w) => w.id === pendingSelectId)
+    if (wf) { setSelected(wf); setQuery(''); setCategory('all') }
+    onPendingConsumed?.()
+  }, [pendingSelectId, onPendingConsumed])
 
   const gsCount = workflows.filter((w) => w.folderId === 'folder_getting_started').length
-  const q = query.toLowerCase()
-  const visible = GETTING_STARTED_WORKFLOWS.filter((w) =>
-    !q || w.name.toLowerCase().includes(q) || (w.description || '').toLowerCase().includes(q)
-  )
+  const missing = total - gsCount
+  const missingColor = missing > 0 ? '#f87171' : missing === 0 ? '#94a3b8' : '#34d399'
+
+  const visible = useMemo(() => {
+    const q = query.toLowerCase()
+    return GETTING_STARTED_WORKFLOWS.filter((w) => {
+      const matchQ = !q || w.name.toLowerCase().includes(q) || (w.description || '').toLowerCase().includes(q)
+      if (!matchQ) return false
+      if (category === 'all') return true
+      const n = parseWfNum(w.name)
+      if (category === 'core') return n >= 1 && n <= 45
+      if (category === 'community') return n >= 46 && n <= 64
+      if (category === 'debugger') return n >= 65
+      return true
+    })
+  }, [query, category])
+
+  const catCounts = useMemo(() => ({
+    all: total,
+    core: GETTING_STARTED_WORKFLOWS.filter(w => { const n = parseWfNum(w.name); return n >= 1 && n <= 45 }).length,
+    community: GETTING_STARTED_WORKFLOWS.filter(w => { const n = parseWfNum(w.name); return n >= 46 && n <= 64 }).length,
+    debugger: GETTING_STARTED_WORKFLOWS.filter(w => parseWfNum(w.name) >= 65).length,
+  }), [total])
 
   function handleRestore() {
     restoreGettingStarted()
     setConfirming(false)
     setRestored(true)
+    setSelected(null)
     setTimeout(() => setRestored(false), 3000)
   }
 
@@ -2419,13 +2580,13 @@ function GettingStartedSection() {
         <div className="bs-gs-hero-icon">
           <GettingStartedIcon style={{ width: 18, height: 18, color: '#818cf8' }} />
         </div>
-        <div>
+        <div style={{ flex: 1 }}>
           <div className="bs-gs-hero-title">Getting Started</div>
-          <div className="bs-gs-hero-sub">45 real working demos — one for every block type. Open on canvas, run, see results.</div>
+          <div className="bs-gs-hero-sub">{total} real working demos — open on canvas, run, see results.</div>
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Stats + Restore row */}
       <div className="bs-gs-stats">
         <div className="bs-gs-stat2">
           <span className="bs-gs-stat2-n" style={{ color: '#818cf8' }}>{gsCount}</span>
@@ -2433,66 +2594,264 @@ function GettingStartedSection() {
         </div>
         <div className="bs-gs-stat2-div" />
         <div className="bs-gs-stat2">
-          <span className="bs-gs-stat2-n">45</span>
+          <span className="bs-gs-stat2-n">{total}</span>
           <span className="bs-gs-stat2-l">available</span>
         </div>
         <div className="bs-gs-stat2-div" />
         <div className="bs-gs-stat2">
-          <span className="bs-gs-stat2-n" style={{ color: '#34d399' }}>{45 - gsCount}</span>
-          <span className="bs-gs-stat2-l">deleted</span>
+          <span className="bs-gs-stat2-n" style={{ color: missingColor }}>{Math.abs(missing)}</span>
+          <span className="bs-gs-stat2-l">{missing > 0 ? 'missing' : missing < 0 ? 'extra' : 'synced'}</span>
         </div>
-
         <div style={{ flex: 1 }} />
         {!confirming ? (
           <button className="bs-gs-restore-btn" onClick={() => { setConfirming(true); setRestored(false) }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            Restore all 45
+            Restore all {total}
           </button>
         ) : (
           <div className="bs-gs-confirm-inline">
-            <span className="bs-gs-confirm-q">Replace all 45 demos?</span>
+            <span className="bs-gs-confirm-q">Replace all {total} demos?</span>
             <button className="bs-gs-confirm-yes" onClick={handleRestore}>Yes</button>
             <button className="bs-gs-confirm-no" onClick={() => setConfirming(false)}>No</button>
           </div>
         )}
       </div>
-      {restored && <div className="bs-gs-toast">All 45 Getting Started workflows restored.</div>}
+      {restored && <div className="bs-gs-toast">All {total} Getting Started workflows restored.</div>}
 
-      {/* Search */}
-      <div className="bs-gs-search-row">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <input
-          className="bs-gs-search"
-          placeholder="Filter demos by name or block…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {query && <button className="bs-gs-search-clear" onClick={() => setQuery('')}>×</button>}
-        <span className="bs-gs-search-count">{visible.length}</span>
+      {/* Category filter tabs */}
+      <div className="bs-gs-filters">
+        {GS_CAT_FILTERS.map(f => (
+          <button
+            key={f.id}
+            className={`bs-gs-filter-tab ${category === f.id ? 'is-active' : ''}`}
+            onClick={() => { setCategory(f.id); setSelected(null) }}
+          >
+            {f.label}
+            <span className="bs-gs-filter-count">{catCounts[f.id]}</span>
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        {/* Search inline */}
+        <div className="bs-gs-search-row">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.45, flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input
+            className="bs-gs-search"
+            placeholder="Filter…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && <button className="bs-gs-search-clear" onClick={() => setQuery('')}>×</button>}
+          <span className="bs-gs-search-count">{visible.length}</span>
+        </div>
       </div>
 
-      {/* Demo grid */}
-      <div className="bs-gs-grid">
-        {visible.map((wf) => {
-          const { num, label, chip } = parseGsName(wf.name)
-          const color = gsColor(wf.id)
-          return (
-            <div key={wf.id} className="bs-gs-dcard" style={{ '--gc': color }}>
-              <div className="bs-gs-dcard-accent" />
-              <div className="bs-gs-dcard-body">
-                <div className="bs-gs-dcard-top">
-                  {num && <span className="bs-gs-dcard-num">{num}</span>}
-                  <span className="bs-gs-dcard-name">{label}</span>
+      {/* Main content: grid + detail panel */}
+      {(() => {
+        const cardGrid = (
+          <div className="bs-gs-grid">
+            {visible.map((wf) => {
+              const { num, label, chip } = parseGsName(wf.name)
+              const color = gsColor(wf.id)
+              const catColor = getWfCategoryColor(wf.name)
+              const catLabel = getWfCategory(wf.name)
+              const blockTypes = getBlockTypes(wf)
+              const isSelected = selected?.id === wf.id
+              return (
+                <div
+                  key={wf.id}
+                  className={`bs-gs-card ${isSelected ? 'is-selected' : ''}`}
+                  style={{ '--gc': color, '--cc': catColor }}
+                  onClick={() => setSelected(isSelected ? null : wf)}
+                >
+                  <div className="bs-gs-card-accent" />
+                  <div className="bs-gs-card-body">
+                    <div className="bs-gs-card-header">
+                      {num && <span className="bs-gs-card-num">{num}</span>}
+                      <span className="bs-gs-card-cat">{catLabel}</span>
+                    </div>
+                    <div className="bs-gs-card-name">{label}</div>
+                    {wf.description && <div className="bs-gs-card-desc">{wf.description}</div>}
+                    {blockTypes.length > 0 && (
+                      <div className="bs-gs-card-blocks">
+                        {blockTypes.slice(0, 3).map(bt => (
+                          <span key={bt} className="bs-gs-block-chip">{bt.replace(/_/g, ' ')}</span>
+                        ))}
+                        {blockTypes.length > 3 && (
+                          <span className="bs-gs-block-chip bs-gs-block-more">+{blockTypes.length - 3}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                {chip && <span className="bs-gs-dcard-chip">{chip}</span>}
-              </div>
-            </div>
-          )
-        })}
-        {visible.length === 0 && (
-          <div className="bs-gs-empty">No demos match "{query}"</div>
-        )}
+              )
+            })}
+            {visible.length === 0 && (
+              <div className="bs-gs-empty">No demos match "{query}"</div>
+            )}
+          </div>
+        )
+        return selected ? (
+          <div className="bs-gs-content">
+            <SplitPanelView
+              defaultSplit={55}
+              minFirst={200}
+              minSecond={220}
+              style={{ flex: 1, minHeight: 0 }}
+              first={cardGrid}
+              second={<div style={{ overflowY: 'auto', height: '100%' }}><GsDetailPanel wf={selected} onClose={() => setSelected(null)} /></div>}
+            />
+          </div>
+        ) : (
+          <div className="bs-gs-content">{cardGrid}</div>
+        )
+      })()}
+    </div>
+  )
+}
+
+function GsDetailPanel({ wf, onClose }) {
+  const { num, label, chip } = parseGsName(wf.name)
+  const color = gsColor(wf.id)
+  const catLabel = getWfCategory(wf.name)
+  const catColor = getWfCategoryColor(wf.name)
+  const blockTypes = getBlockTypes(wf)
+  const nodeCount = (wf.nodes || []).length
+  const edgeCount = (wf.edges || []).length
+
+  return (
+    <div className="bs-gs-detail">
+      <div className="bs-gs-detail-head">
+        <span className="bs-gs-detail-num" style={{ color }}>{num}</span>
+        <span className="bs-gs-detail-cat-badge" style={{ background: `color-mix(in srgb, ${catColor} 15%, transparent)`, color: catColor }}>{catLabel}</span>
+        <div style={{ flex: 1 }} />
+        <button className="bs-gs-detail-close" onClick={onClose}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
+
+      <div className="bs-gs-detail-title" style={{ color }}>{label}</div>
+      {chip && <div className="bs-gs-detail-chip">{chip}</div>}
+
+      {wf.description && (
+        <div className="bs-gs-detail-desc">{wf.description}</div>
+      )}
+
+      <div className="bs-gs-detail-meta">
+        <span className="bs-gs-detail-meta-item">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>
+          {nodeCount} nodes
+        </span>
+        <span className="bs-gs-detail-meta-item">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          {edgeCount} edges
+        </span>
+      </div>
+
+      {blockTypes.length > 0 && (
+        <div className="bs-gs-detail-section">
+          <div className="bs-gs-detail-section-label">Block Types Used</div>
+          <div className="bs-gs-detail-blocks">
+            {blockTypes.map((bt, i) => (
+              <span key={bt} className="bs-gs-detail-block-chip" style={{
+                background: `color-mix(in srgb, ${GS_PALETTE[i % GS_PALETTE.length]} 12%, transparent)`,
+                color: GS_PALETTE[i % GS_PALETTE.length],
+                borderColor: `color-mix(in srgb, ${GS_PALETTE[i % GS_PALETTE.length]} 30%, transparent)`,
+              }}>
+                {bt.replace(/_/g, ' ')}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bs-gs-detail-section">
+        <div className="bs-gs-detail-section-label">How to Run</div>
+        <div className="bs-gs-detail-steps">
+          <div className="bs-gs-detail-step">
+            <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>1</span>
+            <span>Open from the <span className="bs-gs-detail-hl">Getting Started</span> folder in the sidebar</span>
+          </div>
+          <div className="bs-gs-detail-step">
+            <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>2</span>
+            <span>Press <span className="bs-gs-detail-hl">Run</span> on the canvas toolbar</span>
+          </div>
+          <div className="bs-gs-detail-step">
+            <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>3</span>
+            <span>Check the <span className="bs-gs-detail-hl">Preview</span> or <span className="bs-gs-detail-hl">Run</span> panel for output</span>
+          </div>
+          {catLabel === 'Community' && (
+            <div className="bs-gs-detail-step">
+              <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>4</span>
+              <span>Requires the <span className="bs-gs-detail-hl">ideogram4-storybook</span> block installed</span>
+            </div>
+          )}
+          {catLabel === 'Debugger' && !blockTypes.includes('agent') && (
+            <div className="bs-gs-detail-step">
+              <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>4</span>
+              <span>Right-click a block → <span className="bs-gs-detail-hl">Debug</span> → set a breakpoint → press Run</span>
+            </div>
+          )}
+          {catLabel === 'Debugger' && blockTypes.includes('agent') && (
+            <div className="bs-gs-detail-step">
+              <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>4</span>
+              <span>Right-click Agent → <span className="bs-gs-detail-hl">Debug</span> → switch to the <span className="bs-gs-detail-hl">client.js</span> tab → set a breakpoint → press Run</span>
+            </div>
+          )}
+          {chip && (
+            <div className="bs-gs-detail-step">
+              <span className="bs-gs-detail-step-n" style={{ background: `color-mix(in srgb, ${color} 20%, transparent)`, color }}>✓</span>
+              <span>Focuses the <span className="bs-gs-detail-hl" style={{ color: catColor }}>{chip}</span> block pattern</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Setup & Debug Guide — always shown */}
+      <GsSetupGuide />
+    </div>
+  )
+}
+
+function GsSetupGuide() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="bs-gs-setup">
+      <button className="bs-gs-setup-toggle" onClick={() => setOpen(v => !v)}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+          style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform .18s', opacity: 0.7, flexShrink: 0 }}>
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+        <span>Quick Setup &amp; Debug Guide</span>
+      </button>
+      {open && (
+        <div className="bs-gs-setup-body">
+          <div className="bs-gs-setup-section">
+            <div className="bs-gs-setup-section-title">Start the VS Code Extension</div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">1</span><span>Open this project in VS Code</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">2</span><span>Press <code className="bs-gs-setup-code">F5</code> — the Extension Development Host window opens</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">3</span><span>In the new VS Code window click the <strong>CK8T icon</strong> in the Activity Bar</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">4</span><span>Click <strong>Connect</strong> — the embedded server starts on <code className="bs-gs-setup-code">localhost:3000</code></span></div>
+          </div>
+
+          <div className="bs-gs-setup-section">
+            <div className="bs-gs-setup-section-title">Run a Workflow</div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">5</span><span>Open any workflow from the <strong>Getting Started</strong> folder in the sidebar</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">6</span><span>Press <code className="bs-gs-setup-code">▶ Run</code> in the canvas toolbar</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">7</span><span>Check the <strong>Preview</strong> block on canvas or the <strong>Run</strong> panel at the bottom</span></div>
+          </div>
+
+          <div className="bs-gs-setup-section">
+            <div className="bs-gs-setup-section-title">Debug a Block</div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">8</span><span>Right-click any block → <strong>Debug</strong> to open the Block Debugger</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">9</span><span>For <strong>Agent / AI blocks</strong>: right-click → Debug → switch to the <strong>client.js</strong> tab → set a breakpoint → press Run (same as any other block)</span></div>
+            <div className="bs-gs-setup-step"><span className="bs-gs-setup-n">10</span><span>For <strong>Function / JS blocks</strong>: add <code className="bs-gs-setup-code">debugger</code> statements in the code editor — VS Code pauses on them when the EDH is running</span></div>
+          </div>
+
+          <div className="bs-gs-setup-tip">
+            <strong>Tip:</strong> The CK8T server runs inside the extension host — you don't need a separate terminal. If the server stops, click <strong>Reconnect</strong> in the CK8T panel.
+          </div>
+        </div>
+      )}
     </div>
   )
 }

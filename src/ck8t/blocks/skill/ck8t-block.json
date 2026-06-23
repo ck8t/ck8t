@@ -1,7 +1,8 @@
 {
   "id": "skill",
   "name": "Skill",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "core",
-  "blocks": [{ "type": "skill", "ui": "ui/skill.js" }]
+  "blocks": [{ "type": "skill", "ui": "ui/skill.js" }],
+  "runners": { "client": "runners/client.js" }
 }

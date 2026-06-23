@@ -1328,6 +1328,7 @@ body {
   word-break: break-word;
 }
 
+
 [data-theme='dark'] {
   color-scheme: dark;
   --main-surface-background: #212121e6;
