@@ -23,7 +23,9 @@ import { getAiProviderOptions, getAiProviderModelOptions } from '../stores/ai-pr
  * @param {{ provider?: string }} [values] — current node subBlockValues
  */
 export function getModelOptions(values) {
-  const provider = values?.provider
+  // When the node hasn't pinned a provider yet (empty string or undefined),
+  // fall back to the user's configured default so the model list stays useful.
+  const provider = values?.provider || getDefaultProvider()
   if (provider) {
     const own = getAiProviderModelOptions(provider)
     if (own.length > 0) return own

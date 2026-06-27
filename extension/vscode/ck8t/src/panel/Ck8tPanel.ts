@@ -350,36 +350,85 @@ console.log('[ck8t] __CK8T_BLOCK_DEFS__ ready:',Object.keys(window.__CK8T_BLOCK_
         break;
       }
       case 'saveFile': {
-        const { filename, content, format } = msg.payload as { filename: string; content: string; format?: string };
-        const ext = (filename || 'output.json').split('.').pop()?.toLowerCase() || 'json';
-        const filterMap: Record<string, string[]> = {
-          json: ['json'], txt: ['txt'], pdf: ['pdf'], csv: ['csv'], xlsx: ['xlsx'], xls: ['xls'],
-          png: ['png'], jpg: ['jpg', 'jpeg'], bin: ['bin'],
+        const { filename, content, format, filePath: srcFilePath, destPath: rawDestPath } = msg.payload as {
+          filename?: string; content?: string; format?: string; filePath?: string; destPath?: string | null;
         };
-        const filters: Record<string, string[]> = {};
-        const label = ext.toUpperCase();
-        filters[label] = filterMap[ext] || [ext];
-        filters['All Files'] = ['*'];
 
-        vscode.window.showSaveDialog({
-          defaultUri: vscode.Uri.file(filename || 'output.json'),
-          filters,
-        }).then((uri) => {
-          if (!uri) return;
-          const isBinary = format === 'pdf' || format === 'binary' || ['pdf', 'png', 'jpg', 'jpeg', 'bin'].includes(ext);
-          if (isBinary) {
-            const buf = Buffer.from(content, 'base64');
-            fs.writeFile(uri.fsPath, buf, (err) => {
-              if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
-              else vscode.window.showInformationMessage(`Saved to ${uri.fsPath}`);
+        // Resolve ~ in destPath to the real home directory
+        const destPath = rawDestPath
+          ? rawDestPath.replace(/^~(?=[\\/])/, os.homedir())
+          : null;
+
+        // Helper: auto-save to destPath without a dialog
+        const autoSave = (writeFn: (resolved: string) => void) => {
+          try {
+            fs.mkdirSync(path.dirname(destPath!), { recursive: true });
+            writeFn(destPath!);
+          } catch (err: unknown) {
+            vscode.window.showErrorMessage(`Auto-save failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        };
+
+        // Sentinel path — copy temp file to destPath or show dialog
+        if (srcFilePath) {
+          if (destPath) {
+            autoSave((dest) => {
+              fs.copyFile(srcFilePath, dest, (err) => {
+                if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
+                else vscode.window.showInformationMessage(`Saved to ${dest}`);
+              });
             });
           } else {
-            fs.writeFile(uri.fsPath, content, 'utf8', (err) => {
-              if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
-              else vscode.window.showInformationMessage(`Saved to ${uri.fsPath}`);
+            const ext = (filename || srcFilePath).split('.').pop()?.toLowerCase() || 'bin';
+            const filters: Record<string, string[]> = { [ext.toUpperCase()]: [ext], 'All Files': ['*'] };
+            vscode.window.showSaveDialog({
+              defaultUri: vscode.Uri.file(filename || path.basename(srcFilePath)),
+              filters,
+            }).then((uri) => {
+              if (!uri) return;
+              fs.copyFile(srcFilePath, uri.fsPath, (err) => {
+                if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
+                else vscode.window.showInformationMessage(`Saved to ${uri.fsPath}`);
+              });
             });
           }
-        });
+          break;
+        }
+
+        const ext = (filename || 'output.json').split('.').pop()?.toLowerCase() || 'json';
+        const isBinary = format === 'pdf' || format === 'binary' || ['pdf', 'png', 'jpg', 'jpeg', 'bin'].includes(ext);
+
+        const doWrite = (dest: string) => {
+          if (isBinary) {
+            const buf = Buffer.from(content ?? '', 'base64');
+            fs.writeFile(dest, buf, (err) => {
+              if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
+              else vscode.window.showInformationMessage(`Saved to ${dest}`);
+            });
+          } else {
+            fs.writeFile(dest, content ?? '', 'utf8', (err) => {
+              if (err) vscode.window.showErrorMessage(`Failed to save file: ${err.message}`);
+              else vscode.window.showInformationMessage(`Saved to ${dest}`);
+            });
+          }
+        };
+
+        if (destPath) {
+          autoSave(doWrite);
+        } else {
+          const filterMap: Record<string, string[]> = {
+            json: ['json'], txt: ['txt'], pdf: ['pdf'], csv: ['csv'], xlsx: ['xlsx'], xls: ['xls'],
+            png: ['png'], jpg: ['jpg', 'jpeg'], bin: ['bin'],
+          };
+          const filters: Record<string, string[]> = { [ext.toUpperCase()]: filterMap[ext] || [ext], 'All Files': ['*'] };
+          vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(filename || 'output.json'),
+            filters,
+          }).then((uri) => {
+            if (!uri) return;
+            doWrite(uri.fsPath);
+          });
+        }
         break;
       }
     }

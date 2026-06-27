@@ -77,7 +77,9 @@ window.addEventListener('message', (event) => {
   if (msg.type === 'mcpProgress') {
     const { setProgress, clearProgress } = useMcpProgressStore.getState();
     if (msg.payload) {
-      const nodeId = useWorkflowStore.getState().activeNodeId;
+      // Block-progress path: nodeId is in the payload (set by emitBlockProgress).
+      // MCP tqdm path: no nodeId in payload, use the currently-active node.
+      const nodeId = msg.payload.nodeId || useWorkflowStore.getState().activeNodeId;
       setProgress({ ...msg.payload, nodeId });
     } else {
       clearProgress();

@@ -31,10 +31,11 @@ async function buildServer(): Promise<FastifyInstance> {
   await app.register(sensible)
   await app.register(websocket)
 
-  // -- Content-type parser (10 MB limit) --
+  // -- Content-type parser (100 MB limit — blocks like storybook_pdf can carry a
+  // whole scenes[] array plus one base64 image per scene in a single request) --
   app.addContentTypeParser(
     'application/json',
-    { parseAs: 'string', bodyLimit: 10 * 1024 * 1024 },
+    { parseAs: 'string', bodyLimit: 100 * 1024 * 1024 },
     (_req, body, done) => {
       try {
         done(null, JSON.parse(body as string))

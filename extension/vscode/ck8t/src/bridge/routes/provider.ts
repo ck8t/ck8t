@@ -25,7 +25,17 @@ export function loadActiveFamilyFromDb() {
   if (stored?.family) setActiveFamily(stored.family);
 
   const storedCustom = findById<{ key: string }>(PREF_COLLECTION, ACTIVE_CUSTOM_PROVIDER_KEY);
-  if (storedCustom?.key) setActiveCustomProvider(storedCustom.key);
+  if (storedCustom?.key) {
+    setActiveCustomProvider(storedCustom.key);
+  } else {
+    // Fall back to ai_provider_default (written by the AI Providers panel's Set Default button)
+    const def = findById<{ providerId: string; modelId: string }>('ai_provider_default', 'default');
+    if (def?.providerId && def.providerId !== 'copilot') {
+      setActiveCustomProvider(def.providerId);
+    } else if (def?.providerId === 'copilot' && def.modelId) {
+      setActiveFamily(def.modelId);
+    }
+  }
 }
 
 export function providerRouter() {

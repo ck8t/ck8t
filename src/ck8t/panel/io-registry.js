@@ -239,11 +239,15 @@ const cardPortOverrides = {
   // ─── Control flow ──────────────────────────────────────────────────────────
   // condition: evaluates expression against upstream input
   condition:     { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'conditionResult', type: 'boolean' }, { key: 'selectedPath', type: 'json' }] },
-  // loop/for_each/for_loop: server-side, but port visible for wiring
-  loop:          { inputs: [{ key: 'collection', type: 'json' }], outputs: [{ key: 'results', type: 'array' }, { key: 'iterations', type: 'number' }] },
-  for_loop:      { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
-  for_each:      { inputs: [{ key: 'input', type: 'any' }], outputs: [{ key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
-  // parallel: server-side; wire input for branch fan-out
+  // loop/for_each/for_loop: real cyclic execution — wire `item` to the body block's
+  // input, wire the body block's output back to `feedback` to close the loop. The
+  // engine (src/ck8t/run/loop-engine.js) runs the body chain once per item/iteration
+  // and collects results into `iterations`/`last`.
+  loop:          { inputs: [{ key: 'collection', type: 'json' }, { key: 'feedback', type: 'any' }], outputs: [{ key: 'item', type: 'any' }, { key: 'results', type: 'array' }, { key: 'iterations', type: 'number' }] },
+  for_loop:      { inputs: [{ key: 'input', type: 'any' }, { key: 'feedback', type: 'any' }], outputs: [{ key: 'item', type: 'any' }, { key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
+  for_each:      { inputs: [{ key: 'input', type: 'any' }, { key: 'feedback', type: 'any' }], outputs: [{ key: 'item', type: 'any' }, { key: 'iterations', type: 'array' }, { key: 'last', type: 'json' }] },
+  // parallel: still a stub — real concurrent fan-out needs dynamic per-branch ports
+  // (not yet supported by the static inputs/outputs schema). Left as-is for now.
   parallel:      { inputs: [{ key: 'input', type: 'json' }], outputs: [{ key: 'results', type: 'array' }, { key: 'winner', type: 'json' }] },
 
   // ─── Utility ───────────────────────────────────────────────────────────────

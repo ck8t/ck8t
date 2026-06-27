@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { executeGraph } from '../../engine/graph-runner';
 import { callAgent } from '../../services/llm';
 import { callTool } from '../../services/mcp';
-import { customBlockRunners } from '../../services/block-loader';
+import { customBlockRunners, emitBlockProgress } from '../../services/block-loader';
 import { runDebugBlock } from './debug-ws';
 import type { Workflow } from '../../types';
 
@@ -11,8 +11,9 @@ export function runRouter() {
 
   /* POST /api/v1/ck8t/run-block  — run a single community block server-side */
   router.post('/ck8t/run-block', async (req: Request, res: Response) => {
-    const { type, values, input, inputsByHandle, __ck8tDebug } = req.body as {
+    const { type, nodeId, values, input, inputsByHandle, __ck8tDebug } = req.body as {
       type: string;
+      nodeId?: string;
       values: Record<string, unknown>;
       input: unknown;
       inputsByHandle?: Record<string, unknown>;
@@ -47,11 +48,12 @@ export function runRouter() {
             input: input ?? null,
             inputsByHandle: inputsByHandle ?? {},
             outputs: {},
-            node: { id: type },
+            node: { id: nodeId ?? type },
             allNodes: [],
             subBlockValues: {},
             callAgent,
             callTool,
+            progress: nodeId ? (data: Record<string, unknown>) => emitBlockProgress(nodeId, data) : undefined,
           });
       clearInterval(heartbeat);
       res.end(JSON.stringify({ output }));

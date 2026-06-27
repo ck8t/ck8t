@@ -60,16 +60,36 @@ function PasswordInputField({ value, onChange, placeholder, readOnly }) {
 
 export default function SubBlockRenderer({ sub, value, onChange, blockValues, nodeId }) {
   const set = useCallback((v) => onChange(sub.id, v), [onChange, sub.id])
+  // For dropdown/combobox, treat "" the same as null — empty string means "no selection"
+  // and the block's defaultValue getter (e.g. getDefaultModel/Provider) should fire.
+  const isSelectionType = sub.type === 'dropdown' || sub.type === 'combobox'
+  const effectiveValue = isSelectionType && value === '' ? undefined : value
   const defaultValue =
-    value !== undefined && value !== null
-      ? value
+    effectiveValue !== undefined && effectiveValue !== null
+      ? effectiveValue
       : typeof sub.value === 'function'
         ? sub.value(blockValues || {})
         : sub.defaultValue
 
-  // Subscribe to stores so model comboboxes re-render when provider data loads or changes
-  useLlmConfigStore((s) => s.activeProvider)
-  useAiProvidersStore((s) => s.providers)
+  // Subscribe to store-level defaults — captured so useEffect can depend on them
+  const activeProvider = useLlmConfigStore((s) => s.activeProvider)
+  const defaultModel = useLlmConfigStore((s) => s.defaultModel)
+  const defaultProviderId = useAiProvidersStore((s) => s.defaultProviderId)
+  const defaultModelId = useAiProvidersStore((s) => s.defaultModelId)
+
+  // When the stored value is empty and a real default loads from the bridge,
+  // persist it into subBlockValues so validation and the runner both see a
+  // non-empty value without the user having to touch the block.
+  useEffect(() => {
+    if (!isSelectionType) return
+    if (value !== '' && value !== undefined && value !== null) return
+    const computed =
+      typeof sub.value === 'function' ? sub.value(blockValues || {}) : sub.defaultValue
+    if (computed !== undefined && computed !== null && computed !== '') {
+      set(computed)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultProviderId, defaultModelId, activeProvider, defaultModel, blockValues?.provider, isSelectionType, sub.id])
 
   // Debug mode state for this node (drives Monaco breakpoint gutter)
   const isDebugMode = useBlockDebugStore((s) => s.debugEnabled.has(nodeId))

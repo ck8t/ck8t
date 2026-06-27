@@ -31,6 +31,7 @@ import { useMcpProgressStore } from '../stores/mcp-progress-store'
 import { useBlockDebugStore } from '../stores/block-debug-store'
 import { useBlockDebuggerStore } from '../debug/block-debugger-store'
 import { BlockDebugEngine } from '../debug/block-debug-engine'
+import { computeLoopPlans, runLoopBlock } from './loop-engine'
 import { startExtDebugSession } from '../debug/ext-debug-client'
 
 // Validate a runtime value against a declared port type.
@@ -141,6 +142,12 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
   const outgoing = groupBy(edges, 'source')
   const incoming = groupBy(edges, 'target')
 
+  // ── Real cyclic loop execution (for_each / for_loop / loop) ──────────────
+  // Detects item->body-chain->feedback cycles and excludes the body nodes from
+  // the normal one-shot BFS scheduling below — the loop node "owns" them and
+  // drives the chain itself via runLoopBlock(). See loop-engine.js.
+  const { plans: loopPlans, bodyOwner: loopBodyOwner } = computeLoopPlans(nodes, edges, GraphValidationError)
+
   // ── Validate: required subBlock fields must be set before execution starts ──
   // This catches blocks like MCP (server + tool required) or any block with
   // required: true fields that the user hasn't configured yet.
@@ -162,6 +169,15 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
       const v = vals[sub.id]
       const isEmpty = v == null || v === '' || (Array.isArray(v) && v.length === 0)
       if (isEmpty) {
+        // A required field can still resolve via the block's own defaultValue
+        // getter (e.g. agent.model falling back to getDefaultModel() / the
+        // user's "Set as Default" choice) — only flag it as missing if there's
+        // truly no default either. Guard the getter call: it may throw if the
+        // backing store hasn't hydrated yet.
+        let resolvedDefault
+        try { resolvedDefault = sub.defaultValue } catch { resolvedDefault = undefined }
+        const defaultIsEmpty = resolvedDefault == null || resolvedDefault === '' || (Array.isArray(resolvedDefault) && resolvedDefault.length === 0)
+        if (!defaultIsEmpty) continue
         const nodeTitle = n.data?.title || blockDef.name || n.data?.blockType || n.id
         const fieldLabel = sub.title || sub.id
         throw new GraphValidationError(
@@ -293,7 +309,11 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
     const ready = nodes.filter((n) => {
       if (started.has(n.id)) return false
       if (!reachable.has(n.id)) return false
-      const ins = incoming[n.id] || []
+      // Loop body nodes are owned by their loop node — they're driven directly by
+      // runLoopBlock(), never scheduled independently by this BFS.
+      if (loopBodyOwner.has(n.id)) return false
+      const loopPlan = loopPlans.get(n.id)
+      const ins = loopPlan ? loopPlan.gatingEdges : (incoming[n.id] || [])
       if (ins.length === 0) return false
       return ins.every(edgeIsLive)
     })
@@ -302,6 +322,50 @@ export async function executeGraph({ workflow, inputs, onProgress }) {
     await Promise.all(ready.map(async (n) => {
       started.add(n.id)
       const t0 = performance.now()
+
+      // ── Loop nodes (for_each / for_loop / loop) with a real body chain wired
+      // bypass the generic single-shot path entirely — runLoopBlock() drives
+      // the chain once per item, writing outputs[n.id] (and outputs[bodyId])
+      // itself. See loop-engine.js for why this needs special-casing.
+      const loopPlan = loopPlans.get(n.id)
+      if (loopPlan) {
+        const loopValues = subBlockValues[n.id] || {}
+        onProgress?.({ type: 'start', nodeId: n.id, blockType: n.data?.blockType, title: n.data?.title, values: loopValues })
+        const blkCfg = getBlock(n.data?.blockType)
+        const progressFn = blkCfg?.hasProgress
+          ? (data) => useMcpProgressStore.getState().setProgress({ nodeId: n.id, ...data })
+          : undefined
+        try {
+          const result = await runLoopBlock({
+            node: n, plan: loopPlan, incoming, nodesById, subBlockValues, outputs, allNodes, runNode, progress: progressFn,
+          })
+          const iterationCount = Array.isArray(result.iterations) ? result.iterations.length : (result.iterations ?? result.results?.length ?? 0)
+          const ms = Math.round(performance.now() - t0)
+          const traceEntry = {
+            nodeId: n.id, blockType: n.data?.blockType, title: n.data?.title,
+            input: null, output: result, values: loopValues,
+            meta: { loop: true, iterationCount }, ms,
+          }
+          trace.push(traceEntry)
+          try { useWorkflowStore.getState().recordNodeOutput(n.id, result) } catch { /* ignore */ }
+          try { useWorkflowStore.getState().recordNodeTrace(n.id, traceEntry) } catch { /* ignore */ }
+          onProgress?.({ type: 'done', nodeId: n.id, blockType: n.data?.blockType, title: n.data?.title, output: result, ms })
+        } catch (err) {
+          const ms = Math.round(performance.now() - t0)
+          const errTraceEntry = {
+            nodeId: n.id, blockType: n.data?.blockType, title: n.data?.title,
+            input: null, values: loopValues, error: err.message || String(err), ms,
+          }
+          trace.push(errTraceEntry)
+          try { useWorkflowStore.getState().recordNodeTrace(n.id, errTraceEntry) } catch { /* ignore */ }
+          onProgress?.({ type: 'error', nodeId: n.id, blockType: n.data?.blockType, title: n.data?.title, error: err.message || String(err) })
+          throw err
+        } finally {
+          if (progressFn) useMcpProgressStore.getState().clearProgress()
+        }
+        return
+      }
+
       const inEdges = incoming[n.id] || []
       // Resolve per-edge output: if the edge's sourceHandle is a named
       // handle like "out_status", extract just that field from the source
@@ -902,7 +966,7 @@ function buildRunCtx({ node, values, input, outputs, inputsByHandle, allNodes, s
     },
     getSkill: (id) => useWorkspaceStore.getState().skills?.find(s => s.id === id || s.name === id) ?? null,
     runSkill: (skill, inputStr) => runSkillSource(skill, inputStr),
-    vsApi: globalThis.vsApi ?? null,
+    vsApi: (typeof window !== 'undefined' && window.__CK8T_VSCODE_API__) || null,
     progress: null,
   }
 }
@@ -1456,9 +1520,28 @@ function runSwitchNode({ values, input }) {
 }
 
 /**
+ * Sniff magic bytes of a raw (unprefixed) base64 string to detect PNG/JPEG/GIF/PDF.
+ * Only decodes the first 16 chars — fast, no full decode.
+ */
+function detectBase64MimeBySignature(str) {
+  if (typeof str !== 'string' || str.length < 16 || /\s/.test(str.slice(0, 24))) return null
+  if (!/^[A-Za-z0-9+/]+=*$/.test(str.slice(0, 24))) return null
+  let bytes
+  try {
+    const head = atob(str.slice(0, 16))
+    bytes = Array.from(head, (c) => c.charCodeAt(0))
+  } catch { return null }
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return 'image/gif'
+  if (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) return 'application/pdf'
+  return null
+}
+
+/**
  * Extract a data-URI (image or PDF) embedded anywhere in a block output.
- * Handles: direct data-URI string, markdown ![...](data:...), MCP content
- * arrays [{type:'text',text:'...data:...'}], and objects with image/path fields.
+ * Handles: direct data-URI string, raw unprefixed base64 (magic-byte sniffed),
+ * markdown ![...](data:...), MCP content arrays, and objects with image fields.
  * Returns { dataUri, mimeType } or null.
  */
 export function extractMediaUri(value) {
@@ -1470,6 +1553,9 @@ export function extractMediaUri(value) {
     // Markdown image embedding: ![alt](data:...)
     const md = value.match(/!\[[^\]]*\]\((data:(?:image\/[^);]+|application\/pdf);base64,[A-Za-z0-9+/=\n]+)\)/)
     if (md) return extractMediaUri(md[1])
+    // Raw unprefixed base64 — sniff magic bytes (cuda_id4_generate, storybook_pdf, etc.)
+    const sniffed = detectBase64MimeBySignature(value.trim())
+    if (sniffed) return { dataUri: `data:${sniffed};base64,${value.trim()}`, mimeType: sniffed }
     return null
   }
   if (Array.isArray(value)) {
@@ -1511,14 +1597,49 @@ function b64ToBytes(b64) {
  * inline json-preview area on the card) can see it.
  * Supports JSON, raw text, PDF (base64 → binary), and binary (base64 → binary).
  */
+function resolveFilenameTemplate(str) {
+  const now = new Date()
+  const ts = now.toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19)
+  const date = now.toISOString().slice(0, 10)
+  return str.replace(/\{\{timestamp\}\}/gi, ts).replace(/\{\{date\}\}/gi, date)
+}
+
 function runSaveToFiles({ values, input }) {
   const fmt = values.format || 'json'
-  const defaultFilename = (values.filename || '').trim() || 'output'
-  const filenameHint = (values.path || '').trim().replace(/^.*[\\/]/, '') || defaultFilename
+  const defaultFilename = resolveFilenameTemplate((values.filename || '').trim() || 'output')
+  const pathValue = resolveFilenameTemplate((values.path || '').trim())
+
+  // Detect whether `path` is an output DIRECTORY (absolute/home path with no extension,
+  // or ending with / or \). If so, combine with the filename sub-block for auto-save.
+  const isOutputDir = pathValue && (
+    pathValue.startsWith('~/') || pathValue.startsWith('/') ||
+    /^[A-Za-z]:[/\\]/.test(pathValue) ||
+    pathValue.endsWith('/') || pathValue.endsWith('\\')
+  ) && !pathValue.split(/[/\\]/).pop().includes('.')
+
+  // destPath: full auto-save path (no dialog). null = show dialog.
+  const destPath = isOutputDir
+    ? pathValue.replace(/[/\\]$/, '') + '/' + defaultFilename
+    : null
+
+  // filenameHint: what the save-dialog suggests when destPath is null
+  const filenameHint = pathValue.replace(/^.*[\\/]/, '') || defaultFilename
 
   const result = { savedAt: null, bytes: 0, payload: input }
 
   const vsApi = typeof window !== 'undefined' && window.__CK8T_VSCODE_API__
+
+  // Lightweight file-path sentinel — extension host copies from temp path,
+  // avoiding any base64 encode/decode or large postMessage payloads.
+  if (input && typeof input === 'object' && typeof input.__ck8t_file_path === 'string') {
+    if (vsApi) vsApi.postMessage({ type: 'saveFile', payload: {
+      filePath: input.__ck8t_file_path,
+      filename: filenameHint,
+      destPath,   // non-null → extension auto-saves without dialog
+      format: fmt,
+    }})
+    return { ...result, savedAt: new Date().toISOString() }
+  }
 
   // ── Determine blob / content ─────────────────────────────────────────────
   let blob = null
@@ -1560,16 +1681,15 @@ function runSaveToFiles({ values, input }) {
   }
 
   // ── Trigger save ─────────────────────────────────────────────────────────
-  const path = (values.path || '').trim()
-  if (path || values.filename) {
+  if (pathValue || values.filename) {
     try {
       if (vsApi) {
-        // VS Code extension: delegate to extension host file dialog
+        // VS Code extension: delegate to extension host (auto-save when destPath set)
         if (b64ForVscode) {
-          vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: b64ForVscode, format: fmt } })
+          vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: b64ForVscode, format: fmt, destPath } })
         } else {
           blob.text().then((text) => {
-            vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: text } })
+            vsApi.postMessage({ type: 'saveFile', payload: { filename: downloadName, content: text, destPath } })
           })
         }
       } else {

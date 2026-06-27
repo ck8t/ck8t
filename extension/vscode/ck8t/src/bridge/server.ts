@@ -35,6 +35,7 @@ import { blockManagerRouter } from './routes/block-manager';
 import { auditRouter } from './routes/audit';
 import { devtoolsRouter } from './routes/devtools';
 import { aiProvidersRouter } from './routes/ai-providers';
+import { mediaRouter } from './routes/media';
 import { attachDebugWs } from './routes/debug-ws';
 
 function getFreePort(): Promise<number> {
@@ -61,7 +62,10 @@ export async function startBridgeServer(): Promise<number> {
     next();
   });
   app.use(cors({ origin: '*' }));
-  app.use(express.json({ limit: '10mb' }));
+  // 10mb was too small for blocks like storybook_pdf, whose /ck8t/run-block body
+  // can carry a whole scenes[] array PLUS one base64 image per scene embedded in
+  // the same request — easily 30-50mb for a multi-scene storybook.
+  app.use(express.json({ limit: '100mb' }));
 
   /* Health */
   app.get('/health', (_req, res) => res.json({ ok: true, mode: 'vscode-extension', port }));
@@ -80,6 +84,7 @@ export async function startBridgeServer(): Promise<number> {
   router.use(auditRouter());
   router.use(devtoolsRouter());
   router.use(aiProvidersRouter());
+  router.use(mediaRouter());
   app.use('/api/v1', router);
 
   /* Webhook catch-all — must match /hook/:workflowId */

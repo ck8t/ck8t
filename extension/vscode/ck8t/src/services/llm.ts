@@ -474,7 +474,9 @@ export async function callAgent(req: AgentRequest): Promise<AgentResponse> {
   const bag = buildBag(req.input);
   const systemPrompt = interpolateBag(agent.systemPrompt ?? '', bag);
   const userPrompt   = interpolateBag(agent.userPrompt ?? '{{input}}', bag);
-  const model        = agent.model ?? '';
+  // Fall back to the provider's stored activeModel when the node has no explicit model set
+  const providerActiveModel = getAllCustomProviders().find((p) => p.key === customKey)?.activeModel ?? '';
+  const model        = agent.model || providerActiveModel;
   const temperature  = agent.temperature ?? 0.7;
 
   // Inject conversation history as formatted prior-context prefix

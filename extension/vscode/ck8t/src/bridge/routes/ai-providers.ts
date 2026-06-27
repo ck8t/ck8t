@@ -205,12 +205,16 @@ export function aiProvidersRouter() {
       if (!providerId) return res.status(400).json({ error: 'providerId is required' });
       upsert(DEFAULT_COL, DEFAULT_ID, { providerId, modelId: modelId ?? '' });
 
-      // Route to copilot or custom provider depending on provider id
+      // Route to copilot or custom provider depending on provider id,
+      // and persist to llm_prefs so loadActiveFamilyFromDb() restores it on restart
       if (providerId === 'copilot') {
         setActiveFamily(modelId ?? '');
         setActiveCustomProvider(null);
+        upsert('llm_prefs', 'activeFamily', { family: modelId ?? '' });
+        upsert('llm_prefs', 'activeCustomProvider', { key: '' });
       } else {
         setActiveCustomProvider(providerId);
+        upsert('llm_prefs', 'activeCustomProvider', { key: providerId });
       }
 
       res.json({ ok: true, providerId, modelId });

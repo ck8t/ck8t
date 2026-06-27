@@ -786,7 +786,7 @@ function WorkflowNode({ id, data, selected }) {
               {nodeProgress ? (
                 <>
                   <span className="bs-node-progress-label">
-                    {nodeProgress.serverName}
+                    {nodeProgress.label || nodeProgress.serverName}
                     {nodeProgress.toolName && (
                       <span className="bs-node-progress-tool"> · {nodeProgress.toolName}</span>
                     )}
@@ -805,7 +805,7 @@ function WorkflowNode({ id, data, selected }) {
                     style={{ width: `${nodeProgress.pct ?? 0}%` }}
                   />
                 </div>
-                {nodeProgress.step !== undefined && (
+                {nodeProgress.step != null && nodeProgress.step !== '' && (
                   <div className="bs-node-progress-steps">
                     step {nodeProgress.step} / {nodeProgress.total}
                   </div>

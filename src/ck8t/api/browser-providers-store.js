@@ -234,7 +234,14 @@ export const useBrowserProvidersStore = create((set, get) => ({
     const { providers, activeKey } = get()
     if (providers.length === 0) return null
 
-    const activePk = activeKey || providers[0]?.key
+    // If the user never explicitly activated a provider, don't just grab
+    // providers[0] by array position — that silently picks whichever entry
+    // happens to be first (e.g. one added once to try out, never configured)
+    // as "the default" even if it has no working apiKey/chatUrl. Prefer the
+    // first provider that's actually configured; only fall back to raw
+    // array order if literally none of them are.
+    const isUsable = (p) => Boolean((p.apiKey && p.apiKey.trim()) || (p.chatUrl && p.chatUrl.trim()))
+    const activePk = activeKey || providers.find(isUsable)?.key || providers[0]?.key
     const config   = { provider: activePk }
 
     for (const p of providers) {
